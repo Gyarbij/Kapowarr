@@ -1,15 +1,20 @@
-# syntax=docker/dockerfile:1
+FROM python:3.13-alpine
 
-FROM python:3.8-alpine
-STOPSIGNAL SIGTERM
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    NAME=Kapowarr
 
 WORKDIR /app
 
-COPY requirements.txt requirements.txt
-RUN pip3 install -r requirements.txt
+COPY requirements.txt /app/
 
-COPY . .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+COPY . /app
 
 EXPOSE 5656
 
-CMD [ "python3", "/app/Kapowarr.py" ]
+STOPSIGNAL SIGTERM
+
+CMD ["python", "Kapowarr.py"]
