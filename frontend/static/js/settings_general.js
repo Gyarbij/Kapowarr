@@ -10,6 +10,7 @@ function fillSettings(api_key) {
 		document.querySelector('#cv-input').value = json.result.comicvine_api_key;
 		document.querySelector('#flaresolverr-input').value = json.result.flaresolverr_base_url;
 		document.querySelector('#log-level-input').value = json.result.log_level;
+		document.querySelector('#display-mode-input').value = json.result.library_display_mode;
 		
 		if (json.result.auth_username && json.result.auth_password) {
 			document.querySelector('#auth-toggle').value = 'username-password';
@@ -32,7 +33,8 @@ function saveSettings(api_key) {
 		'auth_password': '',
 		'comicvine_api_key': document.querySelector('#cv-input').value,
 		'flaresolverr_base_url': document.querySelector('#flaresolverr-input').value,
-		'log_level': parseInt(document.querySelector('#log-level-input').value)
+		'log_level': parseInt(document.querySelector('#log-level-input').value),
+		'library_display_mode': document.querySelector('#display-mode-input').value
 	};
 	
 	const auth_toggle = document.querySelector('#auth-toggle');

@@ -375,12 +375,16 @@ class LibrarySorting(BaseEnum):
 
 class LibraryFilter(BaseEnum):
     """
-    The filter to apply to the library, where the key value is the entire
-    `WHERE ...` SQL statement
+    The filter to apply to the library.
     """
 
-    WANTED = "WHERE issues_downloaded_monitored < issue_count_monitored"
-    MONITORED = "WHERE monitored = 1"
+    WANTED = "wanted"
+    MONITORED = "monitored"
+    UNMONITORED = "unmonitored"
+    MISSING = "missing"
+    COMPLETE = "complete"
+    NO_ISSUES = "no_issues"
+    DOWNLOADED = "downloaded"
 
 
 class MonitorScheme(BaseEnum):

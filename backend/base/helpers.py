@@ -21,7 +21,8 @@ from typing import (TYPE_CHECKING, Any, Callable, Collection, Dict, Iterable,
                     Iterator, List, Mapping, Sequence, Tuple, Union)
 from urllib.parse import unquote
 
-from aiohttp import ClientError, ClientSession, ClientTimeout
+from aiohttp import (ClientConnectorError, ClientError,
+                     ClientSession, ClientTimeout)
 from bencoding import bdecode
 from multidict import CIMultiDict, CIMultiDictProxy
 from requests import Session as RSession
@@ -1044,7 +1045,7 @@ class AsyncSession(ClientSession):
                 if response.status in Constants.STATUS_FORCELIST_RETRIES:
                     raise ClientError
 
-            except ClientError:
+            except (ClientError, ClientConnectorError):
                 if round == Constants.TOTAL_RETRIES:
                     # Exhausted retries
                     raise
@@ -1353,6 +1354,18 @@ class PortablePool(Pool):
         func,
         iterable,
         chunksize=None,
+        callback=None,
+        error_callback=None
+    ):
+        new_iterable = ((func, *i) for i in iterable)
+        new_func = _pool_starmap_func
+        return super().starmap_async(
+            new_func,
+            new_iterable,
+            chunksize,
+            callback,
+            error_callback
+        )
         callback=None,
         error_callback=None
     ):

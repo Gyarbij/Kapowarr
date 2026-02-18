@@ -38,6 +38,15 @@ const library_els = {
 		select_all: document.querySelector('#selectall-input'),
 		cancel: document.querySelector('#cancel-massedit'),
 		progress: document.querySelector("#massedit-progress")
+	},
+	pagination: {
+		container: document.querySelector('#pagination-controls'),
+		first: document.querySelector('#page-first'),
+		prev: document.querySelector('#page-prev'),
+		info: document.querySelector('#page-info'),
+		next: document.querySelector('#page-next'),
+		last: document.querySelector('#page-last'),
+		size: document.querySelector('#page-size')
 	}
 };
 
@@ -48,6 +57,14 @@ const pre_build_els = {
 
 function showLibraryPage(el) {
 	hide(Object.values(library_els.pages), [el]);
+};
+
+// Pagination state
+const paginationState = {
+	currentPage: 1,
+	totalPages: 1,
+	totalItems: 0,
+	pageSize: 20
 };
 
 class LibraryEntry {
@@ -122,6 +139,7 @@ class LibraryEntry {
 };
 
 function populateLibrary(volumes, api_key) {
+	// Clear existing entries
 	library_els.views.list.querySelectorAll('.list-entry').forEach(
 		e => e.remove()
 	);
@@ -199,35 +217,95 @@ function populateLibrary(volumes, api_key) {
 	library_els.views.table.appendChild(table_fragment);
 };
 
+function updatePaginationControls() {
+	const { currentPage, totalPages, totalItems, pageSize } = paginationState;
+
+	if (pageSize === 0 || totalItems === 0) {
+		library_els.pagination.container.classList.add('hidden');
+		return;
+	}
+
+	library_els.pagination.container.classList.remove('hidden');
+
+	library_els.pagination.info.innerText =
+		`Page ${currentPage} of ${totalPages} (${totalItems} volumes)`;
+
+	library_els.pagination.first.disabled =
+	library_els.pagination.prev.disabled =
+		currentPage <= 1;
+
+	library_els.pagination.next.disabled =
+	library_els.pagination.last.disabled =
+		currentPage >= totalPages;
+};
+
 function fetchLibrary(api_key) {
 	library_els.mass_edit.progress.innerText = '';
 	showLibraryPage(library_els.pages.loading);
 
 	const params = {
 		sort: library_els.view_options.sort.value,
-		filter: library_els.view_options.filter.value
+		filter: library_els.view_options.filter.value,
+		minimal: 'true'
 	};
 	const query = library_els.search.input.value;
 	if (query !== '')
 		params.query = query;
 
+	// Pagination params
+	const pageSize = paginationState.pageSize;
+	if (pageSize > 0) {
+		params.limit = pageSize;
+		params.offset = (paginationState.currentPage - 1) * pageSize;
+	} else {
+		params.limit = 0;
+		params.offset = 0;
+	}
+
 	fetchAPI('/volumes', api_key, params)
 	.then(json => {
-		if (json.result.length === 0) {
+		const data = json.result;
+		const volumes = data.volumes;
+		const total = data.total;
+
+		// Update pagination state
+		paginationState.totalItems = total;
+		if (pageSize > 0) {
+			paginationState.totalPages = Math.max(1, Math.ceil(total / pageSize));
+		} else {
+			paginationState.totalPages = 1;
+		}
+		// Clamp current page
+		if (paginationState.currentPage > paginationState.totalPages) {
+			paginationState.currentPage = paginationState.totalPages;
+		}
+
+		if (volumes.length === 0 && total === 0) {
 			showLibraryPage(library_els.pages.empty);
 		} else {
-			populateLibrary(json.result, api_key);
+			populateLibrary(volumes, api_key);
 			showLibraryPage(library_els.pages.view);
-		};
+		}
+
+		updatePaginationControls();
 	});
 };
 
+function goToPage(page, api_key) {
+	paginationState.currentPage = Math.max(1,
+		Math.min(page, paginationState.totalPages)
+	);
+	fetchLibrary(api_key);
+};
+
 function searchLibrary() {
+	paginationState.currentPage = 1;
 	usingApiKey().then(api_key => fetchLibrary(api_key));
 };
 
 function clearSearch(api_key) {
 	library_els.search.input.value = '';
+	paginationState.currentPage = 1;
 	fetchLibrary(api_key);
 };
 
@@ -270,10 +348,16 @@ function runAction(api_key, action, args={}) {
 
 // code run on load
 
-const lib_options = getLocalStorage('lib_sorting', 'lib_view', 'lib_filter');
+const lib_options = getLocalStorage('lib_sorting', 'lib_view', 'lib_filter', 'lib_page_size');
 library_els.view_options.sort.value = lib_options.lib_sorting;
 library_els.view_options.view.value = lib_options.lib_view;
 library_els.view_options.filter.value = lib_options.lib_filter;
+
+// Restore page size from localStorage
+if (lib_options.lib_page_size !== null && lib_options.lib_page_size !== undefined) {
+	paginationState.pageSize = parseInt(lib_options.lib_page_size) || 20;
+	library_els.pagination.size.value = String(paginationState.pageSize);
+}
 
 socket.on(
 	'mass_editor_status',
@@ -295,12 +379,30 @@ usingApiKey()
 
 	library_els.view_options.sort.onchange = e => {
 		setLocalStorage({'lib_sorting': library_els.view_options.sort.value});
+		paginationState.currentPage = 1;
 		fetchLibrary(api_key);
 	};
 	library_els.view_options.view.onchange =
 		e => setLocalStorage({'lib_view': library_els.view_options.view.value});
 	library_els.view_options.filter.onchange = e => {
 		setLocalStorage({'lib_filter': library_els.view_options.filter.value});
+		paginationState.currentPage = 1;
+		fetchLibrary(api_key);
+	};
+
+	// Pagination controls
+	library_els.pagination.first.onclick =
+		e => goToPage(1, api_key);
+	library_els.pagination.prev.onclick =
+		e => goToPage(paginationState.currentPage - 1, api_key);
+	library_els.pagination.next.onclick =
+		e => goToPage(paginationState.currentPage + 1, api_key);
+	library_els.pagination.last.onclick =
+		e => goToPage(paginationState.totalPages, api_key);
+	library_els.pagination.size.onchange = e => {
+		paginationState.pageSize = parseInt(library_els.pagination.size.value) || 0;
+		paginationState.currentPage = 1;
+		setLocalStorage({'lib_page_size': String(paginationState.pageSize)});
 		fetchLibrary(api_key);
 	};
 

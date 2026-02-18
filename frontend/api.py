@@ -746,12 +746,32 @@ def api_volumes():
         query = extract_key(request, 'query', False)
         sort = extract_key(request, 'sort', False)
         filter = extract_key(request, 'filter', False)
-        if query:
-            volumes = Library.search(query, sort, filter)
-        else:
-            volumes = Library.get_public_volumes(sort, filter)
+        offset = extract_key(request, 'offset', False)
+        limit = extract_key(request, 'limit', False)
 
-        return return_api(volumes)
+        # 'minimal' param: strip description for lighter payloads
+        minimal_raw = request.values.get('minimal', 'false')
+        minimal = minimal_raw == 'true'
+
+        if query:
+            volumes = Library.search(
+                query, sort, filter,
+                offset=offset, limit=limit, minimal=minimal
+            )
+            total = Library.search_count(query, filter)
+        else:
+            volumes = Library.get_public_volumes(
+                sort, filter,
+                offset=offset, limit=limit, minimal=minimal
+            )
+            total = Library.get_volume_count(filter)
+
+        return return_api({
+            'volumes': volumes,
+            'total': total,
+            'offset': offset,
+            'limit': limit
+        })
 
     elif request.method == 'POST':
         data: dict = request.get_json()
