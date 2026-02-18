@@ -380,6 +380,67 @@ function fetchPublishers(api_key) {
 		});
 }
 
+function hasActiveLibraryFilter() {
+	return (
+		library_els.view_options.filter.value !== ''
+		|| library_els.search.input.value !== ''
+		|| library_els.view_options.publisher.value !== ''
+		|| library_els.view_options.description.value !== ''
+	);
+}
+
+function getAllFilteredVolumeIds(api_key) {
+	const params = {
+		sort: library_els.view_options.sort.value,
+		filter: library_els.view_options.filter.value,
+		minimal: 'true',
+		per_page: 0
+	};
+
+	const query = library_els.search.input.value;
+	if (query !== '')
+		params.query = query;
+
+	const publisher = library_els.view_options.publisher.value;
+	if (publisher !== '')
+		params.publisher = publisher;
+
+	const has_description = library_els.view_options.description.value;
+	if (has_description !== '')
+		params.has_description = has_description;
+
+	return fetchAPI('/volumes', api_key, params)
+		.then(json => (json.result.volumes || []).map(volume => volume.id));
+}
+
+function runUpdateAll(api_key) {
+	if (!hasActiveLibraryFilter()) {
+		sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'update_all'});
+		return;
+	}
+
+	showLibraryPage(library_els.pages.loading);
+	library_els.mass_edit.progress.innerText = '';
+
+	getAllFilteredVolumeIds(api_key)
+		.then(volume_ids => {
+			if (volume_ids.length === 0) {
+				showLibraryPage(library_els.pages.empty);
+				library_els.mass_edit.progress.innerText = 'No filtered volumes to update';
+				return;
+			}
+
+			return sendAPI('POST', '/masseditor', api_key, {}, {
+				'volume_ids': volume_ids,
+				'action': 'update',
+				'args': {}
+			}).then(() => {
+				library_els.mass_edit.progress.innerText = `Queued update for ${volume_ids.length} filtered volumes`;
+				fetchLibrary(api_key);
+			});
+		});
+}
+
 function runAction(api_key, action, args={}) {
 	showLibraryPage(library_els.pages.loading);
 
@@ -432,7 +493,7 @@ usingApiKey()
 		library_els.search.clear.onclick = () => clearSearch(api_key);
 
 		library_els.task_buttons.update_all.onclick =
-			() => sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'update_all'});
+			() => runUpdateAll(api_key);
 		library_els.task_buttons.search_all.onclick =
 			() => sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'search_all'});
 
