@@ -9,6 +9,9 @@ class VirtualScroller {
 		this.posterHeight = options.posterHeight || 280;
 		this.posterGap = options.posterGap || 16;
 		this.tableRowHeight = options.tableRowHeight || 56;
+		this.currentColumns = 1;
+		this.lastMeasuredPosterHeight = this.posterHeight;
+		this.lastMeasuredTableRowHeight = this.tableRowHeight;
 		this.scheduled = false;
 
 		this.topSpacer = document.createElement('div');
@@ -21,10 +24,11 @@ class VirtualScroller {
 		this.container.appendChild(this.itemsContainer);
 		this.container.appendChild(this.bottomSpacer);
 		this.container.classList.add('virtual-mode');
+		this.container.style.overflowAnchor = 'none';
 
 		this.boundOnScroll = () => this.scheduleRender();
 		this.boundOnResize = () => this.scheduleRender();
-		this.container.addEventListener('scroll', this.boundOnScroll);
+		this.container.addEventListener('scroll', this.boundOnScroll, { passive: true });
 		window.addEventListener('resize', this.boundOnResize);
 
 		this.render(true);
@@ -32,12 +36,16 @@ class VirtualScroller {
 
 	setData(data) {
 		this.data = data || [];
+		this.startIndex = -1;
+		this.endIndex = -1;
 		this.container.scrollTop = 0;
 		this.render(true);
 	}
 
 	setMode(mode) {
 		this.mode = mode;
+		this.startIndex = -1;
+		this.endIndex = -1;
 		this.container.scrollTop = 0;
 		this.render(true);
 	}
@@ -67,7 +75,7 @@ class VirtualScroller {
 		}
 
 		if (this.mode === 'table') {
-			const rowHeight = this.tableRowHeight;
+			const rowHeight = Math.max(1, this.lastMeasuredTableRowHeight || this.tableRowHeight);
 			const startIndex = Math.max(
 				0,
 				Math.floor(scrollTop / rowHeight) - this.buffer
@@ -80,12 +88,13 @@ class VirtualScroller {
 			return { startIndex, endIndex, topPadding, bottomPadding };
 		}
 
-		const rowHeight = this.posterHeight + this.posterGap;
-		const itemWidthWithGap = this.posterWidth + this.posterGap;
+		const rowHeight = Math.max(1, this.lastMeasuredPosterHeight + this.posterGap);
+		const itemWidthWithGap = Math.max(1, this.posterWidth + this.posterGap);
 		const columns = Math.max(
 			1,
 			Math.floor((this.container.clientWidth + this.posterGap) / itemWidthWithGap)
 		);
+		this.currentColumns = columns;
 		const totalRows = Math.ceil(total / columns);
 		const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - this.buffer);
 		const visibleRows = Math.ceil(viewportHeight / rowHeight) + this.buffer * 2;
@@ -96,6 +105,47 @@ class VirtualScroller {
 		const bottomPadding = Math.max(0, (totalRows - endRow) * rowHeight);
 
 		return { startIndex, endIndex, topPadding, bottomPadding };
+	}
+
+	measureAfterRender() {
+		const firstItem = this.itemsContainer.firstElementChild;
+		if (firstItem === null)
+			return false;
+
+		if (this.mode === 'table') {
+			const rowHeight = Math.max(1, Math.ceil(firstItem.getBoundingClientRect().height));
+			if (Math.abs(rowHeight - this.lastMeasuredTableRowHeight) >= 2) {
+				this.lastMeasuredTableRowHeight = rowHeight;
+				return true;
+			}
+			return false;
+		}
+
+		const posterHeight = Math.max(1, Math.ceil(firstItem.getBoundingClientRect().height));
+		if (Math.abs(posterHeight - this.lastMeasuredPosterHeight) >= 2) {
+			this.lastMeasuredPosterHeight = posterHeight;
+			return true;
+		}
+
+		const firstRowItems = Array.from(this.itemsContainer.children)
+			.slice(0, Math.min(this.itemsContainer.children.length, 10));
+		if (firstRowItems.length > 0) {
+			const firstTop = firstRowItems[0].getBoundingClientRect().top;
+			let columns = 0;
+			for (const item of firstRowItems) {
+				if (Math.abs(item.getBoundingClientRect().top - firstTop) < 2)
+					columns += 1;
+			}
+			if (columns > 0 && columns !== this.currentColumns) {
+				const estimatedWidth = Math.floor((this.container.clientWidth - (columns - 1) * this.posterGap) / columns);
+				if (estimatedWidth > 60)
+					this.posterWidth = estimatedWidth;
+				this.currentColumns = columns;
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	render(force = false) {
@@ -128,6 +178,9 @@ class VirtualScroller {
 			const absoluteIndex = startIndex + index;
 			this.itemsContainer.appendChild(this.renderItem(nextSlice[index], absoluteIndex));
 		}
+
+		if (this.measureAfterRender())
+			this.scheduleRender();
 	}
 
 	destroy() {

@@ -9,7 +9,7 @@ from __future__ import annotations
 from os.path import dirname, exists, isdir, join
 from sqlite3 import (PARSE_DECLTYPES, Connection, Cursor, ProgrammingError,
                      Row, register_adapter, register_converter)
-from threading import current_thread
+from threading import RLock, current_thread, enumerate
 from time import time
 from typing import Any, Dict, Iterable, Iterator, List, Type, Union
 
@@ -100,28 +100,50 @@ class KapowarrCursor(Cursor):
 
 class DBConnectionManager(type):
     instances: Dict[int, DBConnection] = {}
+    _lock = RLock()
+
+    @classmethod
+    def _prune_dead_thread_connections(cls) -> None:
+        active_thread_ids = {
+            thread.ident
+            for thread in enumerate()
+            if thread.ident is not None
+        }
+        stale_ids = [
+            thread_id
+            for thread_id in cls.instances
+            if thread_id not in active_thread_ids
+        ]
+        for thread_id in stale_ids:
+            connection = cls.instances.pop(thread_id, None)
+            if connection and not connection.closed:
+                connection.close()
+        return
 
     def __call__(cls, **kwargs: Any) -> DBConnection:
         thread_id = current_thread_id()
 
-        if (
-            not thread_id in cls.instances
-            or cls.instances[thread_id].closed
-        ):
-            cls.instances[thread_id] = super().__call__(**kwargs)
+        with cls._lock:
+            cls._prune_dead_thread_connections()
+            if (
+                not thread_id in cls.instances
+                or cls.instances[thread_id].closed
+            ):
+                cls.instances[thread_id] = super().__call__(**kwargs)
 
-        return cls.instances[thread_id]
+            return cls.instances[thread_id]
 
     @classmethod
     def close_connection_of_thread(cls) -> None:
         """Close the DB connection of the current thread"""
         thread_id = current_thread_id()
-        if (
-            thread_id in cls.instances
-            and not cls.instances[thread_id].closed
-        ):
-            cls.instances[thread_id].close()
-            del cls.instances[thread_id]
+        with cls._lock:
+            if (
+                thread_id in cls.instances
+                and not cls.instances[thread_id].closed
+            ):
+                cls.instances[thread_id].close()
+                del cls.instances[thread_id]
         return
 
 
@@ -146,7 +168,13 @@ class DBConnection(Connection, metaclass=DBConnectionManager):
             timeout=timeout,
             detect_types=PARSE_DECLTYPES
         )
-        super().cursor().execute("PRAGMA foreign_keys = ON;")
+        c = super().cursor()
+        c.execute("PRAGMA foreign_keys = ON;")
+        c.execute(f"PRAGMA busy_timeout = {max(1, int(timeout * 1000))};")
+        c.execute("PRAGMA temp_store = MEMORY;")
+        c.execute("PRAGMA synchronous = NORMAL;")
+        c.execute("PRAGMA cache_size = -8192;")
+        c.execute("PRAGMA mmap_size = 268435456;")
         return
 
     def cursor( # type: ignore

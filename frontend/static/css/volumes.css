@@ -133,7 +133,7 @@ main:has(#massedit-toggle:checked) #library-container {
 
 .virtual-mode .list-entry {
 	width: 140px;
-	min-height: 280px;
+	height: 280px;
 	flex: 0 0 140px;
 }
 
@@ -359,6 +359,8 @@ main:has(#massedit-toggle:checked) #lib-stats {
 /* Pagination Controls */
 .pagination {
 	display: flex;
+	flex-direction: row;
+	flex-wrap: wrap;
 	align-items: center;
 	justify-content: center;
 	gap: 0.5rem;
