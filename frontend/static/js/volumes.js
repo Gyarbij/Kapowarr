@@ -441,6 +441,34 @@ function runUpdateAll(api_key) {
 		});
 }
 
+function runSearchAll(api_key) {
+	if (!hasActiveLibraryFilter()) {
+		sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'search_all'});
+		return;
+	}
+
+	showLibraryPage(library_els.pages.loading);
+	library_els.mass_edit.progress.innerText = '';
+
+	getAllFilteredVolumeIds(api_key)
+		.then(volume_ids => {
+			if (volume_ids.length === 0) {
+				showLibraryPage(library_els.pages.empty);
+				library_els.mass_edit.progress.innerText = 'No filtered volumes to search';
+				return;
+			}
+
+			return sendAPI('POST', '/masseditor', api_key, {}, {
+				'volume_ids': volume_ids,
+				'action': 'search',
+				'args': {}
+			}).then(() => {
+				library_els.mass_edit.progress.innerText = `Queued search for ${volume_ids.length} filtered volumes`;
+				fetchLibrary(api_key);
+			});
+		});
+}
+
 function runAction(api_key, action, args={}) {
 	showLibraryPage(library_els.pages.loading);
 
@@ -495,7 +523,7 @@ usingApiKey()
 		library_els.task_buttons.update_all.onclick =
 			() => runUpdateAll(api_key);
 		library_els.task_buttons.search_all.onclick =
-			() => sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'search_all'});
+			() => runSearchAll(api_key);
 
 		library_els.view_options.sort.onchange = () => {
 			setLocalStorage({'lib_sorting': library_els.view_options.sort.value});
