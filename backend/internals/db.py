@@ -105,10 +105,11 @@ class DBConnectionManager(type):
     @classmethod
     def _prune_dead_thread_connections(cls) -> None:
         active_thread_ids = {
-            thread.ident
+            (thread.native_id or thread.ident)
             for thread in enumerate()
-            if thread.ident is not None
+            if (thread.native_id is not None or thread.ident is not None)
         }
+        active_thread_ids.add(current_thread_id())
         stale_ids = [
             thread_id
             for thread_id in cls.instances
