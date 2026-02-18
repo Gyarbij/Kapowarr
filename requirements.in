@@ -1,0 +1,15 @@
+requests
+bs4
+flask
+waitress
+pycryptodome
+tenacity
+bencoding
+simplejson
+aiohttp
+flask-socketio
+typing_extensions
+requests
+beautifulsoup4
+cryptography
+websocket-client
