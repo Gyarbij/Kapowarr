@@ -92,7 +92,8 @@ main:has(#massedit-toggle:checked) #library-container {
 	max-height: 70vh;
 	overflow-y: auto;
 	overflow-x: hidden;
-	padding-right: .25rem;
+	padding-right: 0;
+	scrollbar-gutter: stable;
 }
 
 #table-library.virtual-mode {
@@ -107,6 +108,7 @@ main:has(#massedit-toggle:checked) #library-container {
 
 .virtual-items {
 	width: 100%;
+	padding-right: 0;
 }
 
 #list-library.virtual-mode .virtual-items {
@@ -268,6 +270,21 @@ main:has(#massedit-toggle:checked) #table-container {
 	color: var(--text-color);
 
 	font-size: .8rem;
+}
+
+#library-container:has(.virtual-mode) #lib-stats {
+	flex-direction: column;
+	gap: .75rem;
+	padding-top: 1rem;
+}
+
+#library-container:has(.virtual-mode) #lib-stats table {
+	width: 100%;
+}
+
+#library-container:has(.virtual-mode) #lib-stats th {
+	text-align: left;
+	width: 12rem;
 }
 
 #lib-stats th {
