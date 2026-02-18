@@ -1366,15 +1366,3 @@ class PortablePool(Pool):
             callback,
             error_callback
         )
-        callback=None,
-        error_callback=None
-    ):
-        new_iterable = ((func, *i) for i in iterable)
-        new_func = _pool_starmap_func
-        return super().starmap_async(
-            new_func,
-            new_iterable,
-            chunksize,
-            callback,
-            error_callback
-        )
