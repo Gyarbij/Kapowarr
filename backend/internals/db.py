@@ -391,8 +391,6 @@ CREATE INDEX IF NOT EXISTS volumes_publisher_sort_index
     ON volumes(publisher, title, year, volume_number);
 CREATE INDEX IF NOT EXISTS volumes_monitored_index
     ON volumes(monitored);
-CREATE INDEX IF NOT EXISTS volumes_created_at_index
-    ON volumes(created_at);
 CREATE TABLE IF NOT EXISTS issues(
     id INTEGER PRIMARY KEY,
     volume_id INTEGER NOT NULL,
