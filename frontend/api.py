@@ -1477,19 +1477,3 @@ def api_files(f_id: int):
         delete_issue_file(f_id)
         return return_api({})
     return return_api({})
-
-
-# =====================
-# Files
-# =====================
-@api.route('/files/<int:f_id>', methods=['GET', 'DELETE'])
-@error_handler
-@auth
-def api_files(f_id: int):
-    if request.method == 'GET':
-        result = FilesDB.fetch(file_id=f_id)[0]
-        return return_api(result)
-
-    elif request.method == 'DELETE':
-        delete_issue_file(f_id)
-        return return_api({})
