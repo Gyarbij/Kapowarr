@@ -388,6 +388,9 @@ def __sort_link_paths(p: List[DownloadGroup]) -> Tuple[float, int]:
         if entry["info"]["issue_number"] is not None
     )
 
+    if issues_covered == 0:
+        return (float("inf"), len(p))
+
     return (1 / issues_covered, len(p))
 
 
