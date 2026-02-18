@@ -5,6 +5,7 @@
 	<link rel="stylesheet" href="{{ url_for('static', filename='css/volumes.css') }}">
 {% endblock %}
 {% block js %}
+	<script src="{{ url_for('static', filename='js/virtual_scroll.js') }}" defer></script>
 	<script src="{{ url_for('static', filename='js/volumes.js') }}" defer></script>
 {% endblock %}
 
@@ -85,12 +86,25 @@
 			<select id="filter-button" aria-label="Apply a filter">
 				<option value="">No Filter</option>
 				<option value="wanted">Wanted</option>
-				<option value="monitored">Monitored</option>
-				<option value="unmonitored">Unmonitored</option>
-				<option value="missing">Missing</option>
+				<option value="missing_monitored">Missing Issues (Monitored Only)</option>
+				<option value="missing">Missing Issues (Any)</option>
 				<option value="complete">Complete</option>
 				<option value="no_issues">No Issues</option>
-				<option value="downloaded">Downloaded</option>
+				<option value="downloaded">Has Downloads</option>
+				<option value="monitored">Monitored</option>
+				<option value="unmonitored">Unmonitored</option>
+				<option value="recently_added_7">Recently Added (7 days)</option>
+				<option value="recently_added_30">Recently Added (30 days)</option>
+				<option value="recently_added_90">Recently Added (90 days)</option>
+				<option value="has_description">Has Description</option>
+			</select>
+			<select id="publisher-filter" aria-label="Filter by publisher">
+				<option value="">All Publishers</option>
+			</select>
+			<select id="description-filter" aria-label="Filter by description state">
+				<option value="">Any Description</option>
+				<option value="true">Has Description</option>
+				<option value="false">No Description</option>
 			</select>
 			<select id="view-button" aria-label="Change the view">
 				<option value="posters">Posters</option>
@@ -178,17 +192,16 @@
 				<tbody id="table-library"></tbody>
 			</table>
 		</div>
-		<nav id="pagination-controls" class="pagination" aria-label="Pagination">
+		<nav id="pagination-controls" class="pagination hidden" aria-label="Pagination">
 			<button id="page-first" aria-label="First page">&laquo;</button>
 			<button id="page-prev" aria-label="Previous page">&lsaquo;</button>
 			<span id="page-info"></span>
 			<button id="page-next" aria-label="Next page">&rsaquo;</button>
 			<button id="page-last" aria-label="Last page">&raquo;</button>
 			<select id="page-size" aria-label="Items per page">
-				<option value="20">20</option>
+				<option value="25">25</option>
 				<option value="50">50</option>
 				<option value="100">100</option>
-				<option value="0">All</option>
 			</select>
 		</nav>
 		<footer id="lib-stats" aria-label="Library statistics">

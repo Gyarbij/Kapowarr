@@ -7,11 +7,14 @@ const library_els = {
 	views: {
 		list: document.querySelector('#list-library'),
 		table: document.querySelector('#table-library'),
+		table_container: document.querySelector('#table-container')
 	},
 	view_options: {
 		sort: document.querySelector('#sort-button'),
 		view: document.querySelector('#view-button'),
-		filter: document.querySelector('#filter-button')
+		filter: document.querySelector('#filter-button'),
+		publisher: document.querySelector('#publisher-filter'),
+		description: document.querySelector('#description-filter')
 	},
 	task_buttons: {
 		update_all: document.querySelector('#updateall-button'),
@@ -37,7 +40,7 @@ const library_els = {
 		toggle: document.querySelector('#massedit-toggle'),
 		select_all: document.querySelector('#selectall-input'),
 		cancel: document.querySelector('#cancel-massedit'),
-		progress: document.querySelector("#massedit-progress")
+		progress: document.querySelector('#massedit-progress')
 	},
 	pagination: {
 		container: document.querySelector('#pagination-controls'),
@@ -55,309 +58,362 @@ const pre_build_els = {
 	table_entry: document.querySelector('.pre-build-els .table-entry')
 };
 
-function showLibraryPage(el) {
-	hide(Object.values(library_els.pages), [el]);
+const state = {
+	displayMode: 'virtual_scroll',
+	currentVolumes: [],
+	selectedVolumeIds: new Set(),
+	virtualScroller: null
 };
 
-// Pagination state
 const paginationState = {
 	currentPage: 1,
 	totalPages: 1,
 	totalItems: 0,
-	pageSize: 20
+	pageSize: 50
 };
 
-class LibraryEntry {
-	constructor(id, api_key) {
-		this.id = id;
-		this.api_key = api_key;
-		this.list_entry = library_els.views.list.querySelector(`.vol-${id}`);
-		this.table_entry = library_els.views.table.querySelector(`.vol-${id}`);
-	};
+function showLibraryPage(el) {
+	hide(Object.values(library_els.pages), [el]);
+}
 
-	setMonitored(monitored) {
-		sendAPI('PUT', `/volumes/${this.id}`, this.api_key, {}, {
-			monitored: monitored
-		})
-		.then(response => {
-			const monitored_button = this.table_entry.querySelector('.table-monitored');
-			monitored_button.onclick = e => new LibraryEntry(this.id, this.api_key)
-				.setMonitored(!monitored);
+function getActiveView() {
+	return library_els.view_options.view.value;
+}
 
-			if (monitored) {
-				this.list_entry.setAttribute('monitored', '');
-				setIcon(monitored_button, icons.monitored, 'Monitored');
+function getCoverURL(id, api_key) {
+	const size = getActiveView() === 'posters' ? 'thumb' : 'full';
+	return `${url_base}/api/volumes/${id}/cover?api_key=${api_key}&size=${size}`;
+}
 
-			} else {
-				this.list_entry.removeAttribute('monitored');
-				setIcon(monitored_button, icons.unmonitored, 'Unmonitored');
-			};
-		});
-	};
+function setProgressBar(entry, downloaded_count, total_count, entryType, monitored) {
+	const safeTotal = Math.max(total_count, 0);
+	const safeDownloaded = Math.min(downloaded_count, safeTotal);
+	const progress = safeTotal > 0 ? safeDownloaded / safeTotal * 100 : 0;
 
-	getProgress() {
-		return this.list_entry.querySelector('.list-prog-num').innerText
-			.split("/")
-			.map(n => parseInt(n));
-	};
+	const barClass = entryType === 'list' ? '.list-prog-bar' : '.table-prog-bar';
+	const numberClass = entryType === 'list' ? '.list-prog-num' : '.table-prog-num';
+	const bar = entry.querySelector(barClass);
+	entry.querySelector(numberClass).innerText = `${safeDownloaded}/${safeTotal}`;
+	bar.style.width = `${progress}%`;
+
+	if (progress === 100)
+		bar.style.backgroundColor = 'var(--success-color)';
+	else if (monitored)
+		bar.style.backgroundColor = 'var(--accent-color)';
+	else
+		bar.style.backgroundColor = 'var(--error-color)';
+}
+
+function createListEntry(volume, api_key) {
+	const list_entry = pre_build_els.list_entry.cloneNode(true);
+	list_entry.classList.add(`vol-${volume.id}`);
+	list_entry.ariaLabel =
+		`View the volume ${volume.title} (${volume.year}) Volume ${volume.volume_number}`;
+	list_entry.href = `${url_base}/volumes/${volume.id}`;
+	list_entry.querySelector('.list-img').src = getCoverURL(volume.id, api_key);
+
+	const list_title = list_entry.querySelector('.list-title');
+	list_title.innerText = `${volume.title} (${volume.year})`;
+	list_title.title = list_title.innerText;
+	list_entry.querySelector('.list-volume').innerText = `Volume ${volume.volume_number}`;
+
+	if (volume.monitored)
+		list_entry.setAttribute('monitored', '');
 
 	setProgressBar(
-		downloaded_count,
-		total_count
-	) {
-		downloaded_count = Math.min(downloaded_count, total_count);
-
-		const progress = downloaded_count / total_count * 100;
-		const list_bar = this.list_entry.querySelector('.list-prog-bar'),
-			table_bar = this.table_entry.querySelector('.table-prog-bar');
-
-		this.list_entry.querySelector('.list-prog-num').innerText =
-		this.table_entry.querySelector('.table-prog-num').innerText =
-			`${downloaded_count}/${total_count}`;
-
-		list_bar.style.width =
-		table_bar.style.width =
-			`${progress}%`;
-
-		if (progress === 100)
-			list_bar.style.backgroundColor =
-			table_bar.style.backgroundColor =
-				'var(--success-color)';
-
-		else if (this.list_entry.hasAttribute('monitored'))
-			list_bar.style.backgroundColor =
-			table_bar.style.backgroundColor =
-				'var(--accent-color)';
-
-		else
-			list_bar.style.backgroundColor =
-			table_bar.style.backgroundColor =
-				'var(--error-color)';
-
-		return;
-	};
-};
-
-function populateLibrary(volumes, api_key) {
-	// Clear existing entries
-	library_els.views.list.querySelectorAll('.list-entry').forEach(
-		e => e.remove()
+		list_entry,
+		volume.issues_downloaded_monitored,
+		volume.issue_count_monitored,
+		'list',
+		volume.monitored
 	);
+
+	return list_entry;
+}
+
+function toggleMonitored(volume_id, monitored, api_key) {
+	sendAPI('PUT', `/volumes/${volume_id}`, api_key, {}, { monitored })
+		.then(() => fetchLibrary(api_key));
+}
+
+function createTableEntry(volume, api_key) {
+	const table_entry = pre_build_els.table_entry.cloneNode(true);
+	table_entry.classList.add(`vol-${volume.id}`);
+	table_entry.dataset.id = volume.id;
+	table_entry.ariaLabel =
+		`View the volume ${volume.title} (${volume.year}) Volume ${volume.volume_number}`;
+
+	const checkbox = table_entry.querySelector('input[type="checkbox"]');
+	checkbox.checked = state.selectedVolumeIds.has(volume.id);
+	checkbox.onchange = () => {
+		if (checkbox.checked)
+			state.selectedVolumeIds.add(volume.id);
+		else
+			state.selectedVolumeIds.delete(volume.id);
+	};
+
+	const table_link = table_entry.querySelector('.table-link');
+	table_link.href = `${url_base}/volumes/${volume.id}`;
+	table_link.innerText = volume.title;
+
+	table_entry.querySelector('.table-year').innerText = volume.year;
+	table_entry.querySelector('.table-volume').innerText = `Volume ${volume.volume_number}`;
+
+	const monitored_button = table_entry.querySelector('.table-monitored');
+	monitored_button.onclick = () => toggleMonitored(volume.id, !volume.monitored, api_key);
+	if (volume.monitored)
+		setIcon(monitored_button, icons.monitored, 'Monitored');
+	else
+		setIcon(monitored_button, icons.unmonitored, 'Unmonitored');
+
+	setProgressBar(
+		table_entry,
+		volume.issues_downloaded_monitored,
+		volume.issue_count_monitored,
+		'table',
+		volume.monitored
+	);
+
+	return table_entry;
+}
+
+function clearLibraryView() {
+	if (state.virtualScroller !== null) {
+		state.virtualScroller.destroy();
+		state.virtualScroller = null;
+	}
+
+	library_els.views.list.querySelectorAll('.list-entry').forEach(entry => entry.remove());
 	library_els.views.table.innerHTML = '';
-	const space_taker = document.querySelector('.space-taker');
+}
 
-	const list_fragment = document.createDocumentFragment(),
-		table_fragment = document.createDocumentFragment();
+function renderStatic(volumes, api_key) {
+	const activeView = getActiveView();
+	if (activeView === 'posters') {
+		let spaceTaker = library_els.views.list.querySelector('.space-taker');
+		if (spaceTaker === null) {
+			spaceTaker = document.createElement('div');
+			spaceTaker.classList.add('space-taker');
+			library_els.views.list.appendChild(spaceTaker);
+		}
 
-	volumes.forEach(volume => {
-		const list_entry = pre_build_els.list_entry.cloneNode(true),
-			table_entry = pre_build_els.table_entry.cloneNode(true);
-
-		// Label
-		list_entry.ariaLabel = table_entry.ariaLabel =
-			`View the volume ${volume.title} (${volume.year}) Volume ${volume.volume_number}`;
-
-		// ID
-		list_entry.classList.add(`vol-${volume.id}`);
-		table_entry.classList.add(`vol-${volume.id}`);
-		table_entry.dataset.id = volume.id;
-
-		// Link
-		list_entry.href =
-		table_entry.querySelector('.table-link').href =
-			`${url_base}/volumes/${volume.id}`;
-
-		// Cover
-		list_entry.querySelector('.list-img').src =
-			`${url_base}/api/volumes/${volume.id}/cover?api_key=${api_key}`;
-
-		// Title
-		const list_title = list_entry.querySelector('.list-title');
-		list_title.innerText =
-		list_title.title =
-			`${volume.title} (${volume.year})`;
-		table_entry.querySelector('.table-link').innerText =
-			volume.title;
-
-		// Year
-		table_entry.querySelector('.table-year').innerText =
-			volume.year;
-
-		// Volume Number
-		list_entry.querySelector('.list-volume').innerText =
-		table_entry.querySelector('.table-volume').innerText =
-			`Volume ${volume.volume_number}`;
-
-		// Monitored
-		const library_entry = new LibraryEntry(volume.id, api_key);
-		library_entry.list_entry = list_entry;
-		library_entry.table_entry = table_entry;
-
-		const monitored_button = table_entry.querySelector('.table-monitored');
-		monitored_button.onclick = e => library_entry
-			.setMonitored(!volume.monitored);
-		if (volume.monitored) {
-			list_entry.setAttribute('monitored', '');
-			setIcon(monitored_button, icons.monitored, 'Monitored');
-		} else
-			setIcon(monitored_button, icons.unmonitored, 'Unmonitored');
-
-		// Progress Bar
-		library_entry.setProgressBar(
-			volume.issues_downloaded_monitored,
-			volume.issue_count_monitored
+		const fragment = document.createDocumentFragment();
+		volumes.forEach(volume => fragment.appendChild(createListEntry(volume, api_key)));
+		library_els.views.list.insertBefore(
+			fragment,
+			spaceTaker
 		);
+	} else {
+		const fragment = document.createDocumentFragment();
+		volumes.forEach(volume => fragment.appendChild(createTableEntry(volume, api_key)));
+		library_els.views.table.appendChild(fragment);
+	}
+}
 
-		// Add to view
-		list_fragment.appendChild(list_entry)
-		table_fragment.appendChild(table_entry);
-	});
+function renderVirtual(volumes, api_key) {
+	const activeView = getActiveView();
+	if (activeView === 'posters') {
+		state.virtualScroller = new VirtualScroller({
+			container: library_els.views.list,
+			data: volumes,
+			mode: 'posters',
+			buffer: 10,
+			posterWidth: 140,
+			posterHeight: 280,
+			posterGap: 16,
+			renderItem: volume => createListEntry(volume, api_key)
+		});
+	} else {
+		state.virtualScroller = new VirtualScroller({
+			container: library_els.views.table,
+			data: volumes,
+			mode: 'table',
+			buffer: 10,
+			tableRowHeight: 56,
+			renderItem: volume => createTableEntry(volume, api_key)
+		});
+	}
+}
 
-	library_els.views.list.insertBefore(list_fragment, space_taker);
-	library_els.views.table.appendChild(table_fragment);
-};
+function renderLibrary(volumes, api_key) {
+	clearLibraryView();
+	if (state.displayMode === 'virtual_scroll')
+		renderVirtual(volumes, api_key);
+	else
+		renderStatic(volumes, api_key);
+}
 
 function updatePaginationControls() {
-	const { currentPage, totalPages, totalItems, pageSize } = paginationState;
-
-	if (pageSize === 0 || totalItems === 0) {
+	const isPaginationMode = state.displayMode === 'pagination';
+	if (!isPaginationMode || paginationState.totalItems === 0) {
 		library_els.pagination.container.classList.add('hidden');
 		return;
 	}
 
 	library_els.pagination.container.classList.remove('hidden');
-
 	library_els.pagination.info.innerText =
-		`Page ${currentPage} of ${totalPages} (${totalItems} volumes)`;
+		`Page ${paginationState.currentPage} of ${paginationState.totalPages} (${paginationState.totalItems} volumes)`;
 
 	library_els.pagination.first.disabled =
 	library_els.pagination.prev.disabled =
-		currentPage <= 1;
+		paginationState.currentPage <= 1;
 
 	library_els.pagination.next.disabled =
 	library_els.pagination.last.disabled =
-		currentPage >= totalPages;
-};
+		paginationState.currentPage >= paginationState.totalPages;
+}
 
-function fetchLibrary(api_key) {
-	library_els.mass_edit.progress.innerText = '';
-	showLibraryPage(library_els.pages.loading);
-
+function getVolumeParams() {
 	const params = {
 		sort: library_els.view_options.sort.value,
 		filter: library_els.view_options.filter.value,
 		minimal: 'true'
 	};
+
 	const query = library_els.search.input.value;
 	if (query !== '')
 		params.query = query;
 
-	// Pagination params
-	const pageSize = paginationState.pageSize;
-	if (pageSize > 0) {
-		params.limit = pageSize;
-		params.offset = (paginationState.currentPage - 1) * pageSize;
+	const publisher = library_els.view_options.publisher.value;
+	if (publisher !== '')
+		params.publisher = publisher;
+
+	const has_description = library_els.view_options.description.value;
+	if (has_description !== '')
+		params.has_description = has_description;
+
+	if (state.displayMode === 'pagination') {
+		params.page = paginationState.currentPage;
+		params.per_page = paginationState.pageSize;
 	} else {
-		params.limit = 0;
-		params.offset = 0;
+		params.per_page = 0;
 	}
 
-	fetchAPI('/volumes', api_key, params)
-	.then(json => {
-		const data = json.result;
-		const volumes = data.volumes;
-		const total = data.total;
+	return params;
+}
 
-		// Update pagination state
-		paginationState.totalItems = total;
-		if (pageSize > 0) {
-			paginationState.totalPages = Math.max(1, Math.ceil(total / pageSize));
-		} else {
-			paginationState.totalPages = 1;
-		}
-		// Clamp current page
-		if (paginationState.currentPage > paginationState.totalPages) {
-			paginationState.currentPage = paginationState.totalPages;
-		}
+function fetchLibrary(api_key) {
+	library_els.mass_edit.progress.innerText = '';
+	showLibraryPage(library_els.pages.loading);
 
-		if (volumes.length === 0 && total === 0) {
-			showLibraryPage(library_els.pages.empty);
-		} else {
-			populateLibrary(volumes, api_key);
+	fetchAPI('/volumes', api_key, getVolumeParams())
+		.then(json => {
+			const result = json.result;
+			state.currentVolumes = result.volumes;
+
+			paginationState.totalItems = result.total || 0;
+			if (state.displayMode === 'pagination') {
+				paginationState.currentPage = result.page || paginationState.currentPage;
+				paginationState.totalPages = result.total_pages || 1;
+			} else {
+				paginationState.currentPage = 1;
+				paginationState.totalPages = 1;
+			}
+
+			if (result.total === 0) {
+				showLibraryPage(library_els.pages.empty);
+				updatePaginationControls();
+				return;
+			}
+
+			renderLibrary(result.volumes, api_key);
 			showLibraryPage(library_els.pages.view);
-		}
-
-		updatePaginationControls();
-	});
-};
+			updatePaginationControls();
+		});
+}
 
 function goToPage(page, api_key) {
-	paginationState.currentPage = Math.max(1,
-		Math.min(page, paginationState.totalPages)
-	);
+	paginationState.currentPage = Math.max(1, Math.min(page, paginationState.totalPages));
 	fetchLibrary(api_key);
-};
+}
 
 function searchLibrary() {
 	paginationState.currentPage = 1;
 	usingApiKey().then(api_key => fetchLibrary(api_key));
-};
+}
 
 function clearSearch(api_key) {
 	library_els.search.input.value = '';
 	paginationState.currentPage = 1;
 	fetchLibrary(api_key);
-};
+}
 
 function fetchStats(api_key) {
 	fetchAPI('/volumes/stats', api_key)
-	.then(json => {
-		library_els.stats.volume_count.innerText = json.result.volumes;
-		library_els.stats.volume_monitored_count.innerText = json.result.monitored;
-		library_els.stats.volume_unmonitored_count.innerText = json.result.unmonitored;
-		library_els.stats.issue_count.innerText = json.result.issues;
-		library_els.stats.issue_download_count.innerText = json.result.downloaded_issues;
-		library_els.stats.file_count.innerText = json.result.files;
-		library_els.stats.total_file_size.innerText =
-			json.result.total_file_size > 0
-			? convertSize(json.result.total_file_size)
-			: '0 MB';
-	});
-};
+		.then(json => {
+			library_els.stats.volume_count.innerText = json.result.volumes;
+			library_els.stats.volume_monitored_count.innerText = json.result.monitored;
+			library_els.stats.volume_unmonitored_count.innerText = json.result.unmonitored;
+			library_els.stats.issue_count.innerText = json.result.issues;
+			library_els.stats.issue_download_count.innerText = json.result.downloaded_issues;
+			library_els.stats.file_count.innerText = json.result.files;
+			library_els.stats.total_file_size.innerText =
+				json.result.total_file_size > 0
+					? convertSize(json.result.total_file_size)
+					: '0 MB';
+		});
+}
 
-//
-// Mass Edit
-//
+function fetchDisplayMode(api_key) {
+	return fetchAPI('/settings', api_key)
+		.then(json => {
+			state.displayMode = json.result.library_display_mode || 'virtual_scroll';
+			if (state.displayMode !== 'virtual_scroll' && state.displayMode !== 'pagination')
+				state.displayMode = 'virtual_scroll';
+		});
+}
+
+function fetchPublishers(api_key) {
+	return fetchAPI('/volumes/publishers', api_key)
+		.then(json => {
+			const selected =
+				lib_options.lib_publisher_filter
+				|| library_els.view_options.publisher.value;
+			library_els.view_options.publisher.innerHTML = '<option value="">All Publishers</option>';
+			json.result.forEach(publisher => {
+				const option = document.createElement('option');
+				option.value = publisher;
+				option.innerText = publisher;
+				library_els.view_options.publisher.appendChild(option);
+			});
+			library_els.view_options.publisher.value = selected;
+		});
+}
+
 function runAction(api_key, action, args={}) {
 	showLibraryPage(library_els.pages.loading);
 
-	const volume_ids = [...library_els.views.table.querySelectorAll(
-		'input[type="checkbox"]:checked'
-	)].map(v => parseInt(v.parentNode.parentNode.dataset.id))
-
 	sendAPI('POST', '/masseditor', api_key, {}, {
-		'volume_ids': volume_ids,
+		'volume_ids': [...state.selectedVolumeIds],
 		'action': action,
 		'args': args
 	})
-	.then(response => {
-		library_els.mass_edit.select_all.checked = false;
-		fetchLibrary(api_key);
-	});
-};
+		.then(() => {
+			state.selectedVolumeIds.clear();
+			library_els.mass_edit.select_all.checked = false;
+			fetchLibrary(api_key);
+		});
+}
 
-// code run on load
+const lib_options = getLocalStorage(
+	'lib_sorting',
+	'lib_view',
+	'lib_filter',
+	'lib_page_size',
+	'lib_publisher_filter',
+	'lib_description_filter'
+);
 
-const lib_options = getLocalStorage('lib_sorting', 'lib_view', 'lib_filter', 'lib_page_size');
 library_els.view_options.sort.value = lib_options.lib_sorting;
 library_els.view_options.view.value = lib_options.lib_view;
 library_els.view_options.filter.value = lib_options.lib_filter;
+library_els.view_options.publisher.value = lib_options.lib_publisher_filter || '';
+library_els.view_options.description.value = lib_options.lib_description_filter || '';
 
-// Restore page size from localStorage
 if (lib_options.lib_page_size !== null && lib_options.lib_page_size !== undefined) {
-	paginationState.pageSize = parseInt(lib_options.lib_page_size) || 20;
-	library_els.pagination.size.value = String(paginationState.pageSize);
+	paginationState.pageSize = parseInt(lib_options.lib_page_size) || 50;
 }
+library_els.pagination.size.value = String(paginationState.pageSize);
 
 socket.on(
 	'mass_editor_status',
@@ -365,118 +421,114 @@ socket.on(
 );
 
 usingApiKey()
-.then(api_key => {
-	fetchLibrary(api_key);
-	fetchStats(api_key);
-
-	library_els.search.clear.onclick =
-		e => clearSearch(api_key);
-
-	library_els.task_buttons.update_all.onclick =
-		e => sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'update_all'});
-	library_els.task_buttons.search_all.onclick =
-		e => sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'search_all'});
-
-	library_els.view_options.sort.onchange = e => {
-		setLocalStorage({'lib_sorting': library_els.view_options.sort.value});
-		paginationState.currentPage = 1;
+	.then(api_key => Promise.all([
+		fetchDisplayMode(api_key),
+		fetchPublishers(api_key)
+	]).then(() => api_key))
+	.then(api_key => {
 		fetchLibrary(api_key);
-	};
-	library_els.view_options.view.onchange =
-		e => setLocalStorage({'lib_view': library_els.view_options.view.value});
-	library_els.view_options.filter.onchange = e => {
-		setLocalStorage({'lib_filter': library_els.view_options.filter.value});
-		paginationState.currentPage = 1;
-		fetchLibrary(api_key);
-	};
+		fetchStats(api_key);
 
-	// Pagination controls
-	library_els.pagination.first.onclick =
-		e => goToPage(1, api_key);
-	library_els.pagination.prev.onclick =
-		e => goToPage(paginationState.currentPage - 1, api_key);
-	library_els.pagination.next.onclick =
-		e => goToPage(paginationState.currentPage + 1, api_key);
-	library_els.pagination.last.onclick =
-		e => goToPage(paginationState.totalPages, api_key);
-	library_els.pagination.size.onchange = e => {
-		paginationState.pageSize = parseInt(library_els.pagination.size.value) || 0;
-		paginationState.currentPage = 1;
-		setLocalStorage({'lib_page_size': String(paginationState.pageSize)});
-		fetchLibrary(api_key);
-	};
+		library_els.search.clear.onclick = () => clearSearch(api_key);
 
-    library_els.mass_edit.button.onclick =
-    library_els.mass_edit.cancel.onclick =
-        e => {
-            const toggle = library_els.mass_edit.toggle;
-            if (toggle.hasAttribute('checked'))
-                toggle.removeAttribute('checked');
-            else {
-                const select = document.querySelector('select[name="root_folder_id"]');
-                if (select.querySelector('option') === null) {
-                    fetchAPI('/rootfolder', api_key)
-                    .then(json => {
-                        json.result.forEach(rf => {
-                            const entry = document.createElement('option');
-                            entry.value = rf.id;
-                            entry.innerText = rf.folder;
-                            select.appendChild(entry);
-                        });
-                        toggle.setAttribute('checked', '');
-                    });
-                } else
-                    toggle.setAttribute('checked', '');
-            }
-        };
-	library_els.mass_edit.bar.querySelectorAll('.action-divider > button[data-action]').forEach(
-		b => b.onclick = e => runAction(api_key, e.target.dataset.action)
-	);
-	library_els.mass_edit.bar.querySelector('button[data-action="delete"]').onclick =
-		e => runAction(
-			api_key,
-			e.target.dataset.action,
-			{
-				'delete_folder': document.querySelector(
-					'select[name="delete_folder"]'
-				).value === "true"
+		library_els.task_buttons.update_all.onclick =
+			() => sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'update_all'});
+		library_els.task_buttons.search_all.onclick =
+			() => sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'search_all'});
+
+		library_els.view_options.sort.onchange = () => {
+			setLocalStorage({'lib_sorting': library_els.view_options.sort.value});
+			paginationState.currentPage = 1;
+			fetchLibrary(api_key);
+		};
+
+		library_els.view_options.view.onchange = () => {
+			setLocalStorage({'lib_view': library_els.view_options.view.value});
+			renderLibrary(state.currentVolumes, api_key);
+		};
+
+		library_els.view_options.filter.onchange = () => {
+			setLocalStorage({'lib_filter': library_els.view_options.filter.value});
+			paginationState.currentPage = 1;
+			fetchLibrary(api_key);
+		};
+
+		library_els.view_options.publisher.onchange = () => {
+			setLocalStorage({'lib_publisher_filter': library_els.view_options.publisher.value});
+			paginationState.currentPage = 1;
+			fetchLibrary(api_key);
+		};
+
+		library_els.view_options.description.onchange = () => {
+			setLocalStorage({'lib_description_filter': library_els.view_options.description.value});
+			paginationState.currentPage = 1;
+			fetchLibrary(api_key);
+		};
+
+		library_els.pagination.first.onclick = () => goToPage(1, api_key);
+		library_els.pagination.prev.onclick = () => goToPage(paginationState.currentPage - 1, api_key);
+		library_els.pagination.next.onclick = () => goToPage(paginationState.currentPage + 1, api_key);
+		library_els.pagination.last.onclick = () => goToPage(paginationState.totalPages, api_key);
+		library_els.pagination.size.onchange = () => {
+			paginationState.pageSize = parseInt(library_els.pagination.size.value) || 50;
+			paginationState.currentPage = 1;
+			setLocalStorage({'lib_page_size': String(paginationState.pageSize)});
+			fetchLibrary(api_key);
+		};
+
+		library_els.mass_edit.button.onclick =
+		library_els.mass_edit.cancel.onclick = () => {
+			const toggle = library_els.mass_edit.toggle;
+			if (toggle.hasAttribute('checked'))
+				toggle.removeAttribute('checked');
+			else {
+				const select = document.querySelector('select[name="root_folder_id"]');
+				if (select.querySelector('option') === null) {
+					fetchAPI('/rootfolder', api_key)
+						.then(json => {
+							json.result.forEach(rf => {
+								const entry = document.createElement('option');
+								entry.value = rf.id;
+								entry.innerText = rf.folder;
+								select.appendChild(entry);
+							});
+							toggle.setAttribute('checked', '');
+						});
+				} else
+					toggle.setAttribute('checked', '');
 			}
-		);
-	library_els.mass_edit.bar.querySelector('button[data-action="root_folder"]').onclick =
-		e => runAction(
-			api_key,
-			e.target.dataset.action,
-			{
-				'root_folder_id': parseInt(document.querySelector(
-					'select[name="root_folder_id"]'
-				).value)
-			}
-		);
-	library_els.mass_edit.bar.querySelector('button[data-action="monitoring_scheme"]').onclick =
-		e => runAction(
-			api_key,
-			e.target.dataset.action,
-			{
-				'monitoring_scheme': document.querySelector(
-					'select[name="monitoring_scheme"]'
-				).value
-			}
+		};
+
+		library_els.mass_edit.bar.querySelectorAll('.action-divider > button[data-action]').forEach(
+			button => button.onclick = e => runAction(api_key, e.target.dataset.action)
 		);
 
-	socket.on(
-		'downloaded_status',
-		data => {
-			const inst = new LibraryEntry(data.volume_id, api_key);
-			if (inst.list_entry === null)
-				return;
-			const new_progress = inst.getProgress();
-			new_progress[0] += data.downloaded_issues.length
-							- data.not_downloaded_issues.length;
-			inst.setProgressBar(new_progress[0], new_progress[1])
-		}
-	);
-});
+		library_els.mass_edit.bar.querySelector('button[data-action="delete"]').onclick =
+			e => runAction(api_key, e.target.dataset.action, {
+				'delete_folder': document.querySelector('select[name="delete_folder"]').value === 'true'
+			});
+
+		library_els.mass_edit.bar.querySelector('button[data-action="root_folder"]').onclick =
+			e => runAction(api_key, e.target.dataset.action, {
+				'root_folder_id': parseInt(document.querySelector('select[name="root_folder_id"]').value)
+			});
+
+		library_els.mass_edit.bar.querySelector('button[data-action="monitoring_scheme"]').onclick =
+			e => runAction(api_key, e.target.dataset.action, {
+				'monitoring_scheme': document.querySelector('select[name="monitoring_scheme"]').value
+			});
+
+		socket.on('downloaded_status', () => fetchLibrary(api_key));
+	});
+
 library_els.search.container.action = 'javascript:searchLibrary();';
-library_els.mass_edit.select_all.onchange =
-	e => library_els.views.table.querySelectorAll('input[type="checkbox"]')
-			.forEach(c => c.checked = library_els.mass_edit.select_all.checked);
+
+library_els.mass_edit.select_all.onchange = () => {
+	if (library_els.mass_edit.select_all.checked)
+		state.currentVolumes.forEach(volume => state.selectedVolumeIds.add(volume.id));
+	else
+		state.selectedVolumeIds.clear();
+	library_els.views.table.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+		checkbox.checked = library_els.mass_edit.select_all.checked;
+	});
+};

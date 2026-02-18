@@ -87,6 +87,35 @@ main:has(#massedit-toggle:checked) #library-container {
 	gap: 1rem;
 }
 
+#list-library.virtual-mode,
+#table-library.virtual-mode {
+	max-height: 70vh;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding-right: .25rem;
+}
+
+#table-library.virtual-mode {
+	display: block;
+}
+
+#table-library.virtual-mode .table-entry {
+	display: table;
+	width: 100%;
+	table-layout: fixed;
+}
+
+.virtual-items {
+	width: 100%;
+}
+
+#list-library.virtual-mode .virtual-items {
+	display: flex;
+	align-items: flex-start;
+	flex-wrap: wrap;
+	gap: 16px;
+}
+
 .list-entry {
 	flex-grow: 1;
 	width: var(--entry-width);
@@ -100,6 +129,12 @@ main:has(#massedit-toggle:checked) #library-container {
 	border-radius: 1px;
 
 	transition: box-shadow 200ms ease-in;
+}
+
+.virtual-mode .list-entry {
+	width: 140px;
+	min-height: 280px;
+	flex: 0 0 140px;
 }
 
 .list-entry:hover {

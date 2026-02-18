@@ -880,8 +880,10 @@ class Volume:
 class Library:
     @staticmethod
     def _get_filter_clause(
-        filter: Union[LibraryFilter, int, None]
-    ) -> str:
+        filter: Union[LibraryFilter, int, None],
+        publisher: Union[str, None] = None,
+        has_description: Union[bool, None] = None
+    ) -> Tuple[str, List[Any]]:
         """Build a SQL WHERE clause for the given library filter.
         Uses EXISTS predicates instead of computed column aliases
         to ensure SQLite compatibility.
@@ -890,72 +892,104 @@ class Library:
             filter: The filter to apply.
 
         Returns:
-            str: The WHERE clause string (including 'WHERE'), or empty string.
+            Tuple[str, List[Any]]: The WHERE clause and SQL parameters.
         """
+        clauses: List[str] = []
+        params: List[Any] = []
+
         if isinstance(filter, int):
-            return f"WHERE comicvine_id = {filter}"
+            clauses.append("comicvine_id = ?")
+            params.append(filter)
 
-        if filter is None:
-            return ''
-
-        if filter == LibraryFilter.MONITORED:
-            return "WHERE monitored = 1"
+        elif filter == LibraryFilter.MONITORED:
+            clauses.append("monitored = 1")
 
         elif filter == LibraryFilter.UNMONITORED:
-            return "WHERE monitored = 0"
+            clauses.append("monitored = 0")
 
-        elif filter == LibraryFilter.WANTED:
-            # Has at least one monitored issue without a file
-            return """WHERE EXISTS (
+        elif filter in (LibraryFilter.WANTED, LibraryFilter.MISSING_MONITORED):
+            clauses.append("""EXISTS (
                 SELECT 1 FROM issues i
                 LEFT JOIN issues_files if ON i.id = if.issue_id
                 WHERE i.volume_id = volumes.id
                     AND i.monitored = 1
                     AND if.issue_id IS NULL
-            )"""
+            )""")
 
         elif filter == LibraryFilter.MISSING:
-            # Has at least one issue (regardless of monitored) without a file
-            return """WHERE EXISTS (
+            clauses.append("""EXISTS (
                 SELECT 1 FROM issues i
                 LEFT JOIN issues_files if ON i.id = if.issue_id
                 WHERE i.volume_id = volumes.id
                     AND if.issue_id IS NULL
-            )"""
+            )""")
 
         elif filter == LibraryFilter.COMPLETE:
-            # All issues have at least one file
-            return """WHERE NOT EXISTS (
+            clauses.append("""NOT EXISTS (
                 SELECT 1 FROM issues i
                 LEFT JOIN issues_files if ON i.id = if.issue_id
                 WHERE i.volume_id = volumes.id
+                    AND i.monitored = 1
                     AND if.issue_id IS NULL
-            ) AND EXISTS (
+            )""")
+            clauses.append("""EXISTS (
                 SELECT 1 FROM issues
                 WHERE volume_id = volumes.id
-            )"""
+                    AND monitored = 1
+            )""")
 
         elif filter == LibraryFilter.NO_ISSUES:
-            return """WHERE NOT EXISTS (
+            clauses.append("""NOT EXISTS (
                 SELECT 1 FROM issues
                 WHERE volume_id = volumes.id
-            )"""
+            )""")
 
         elif filter == LibraryFilter.DOWNLOADED:
-            # Has at least one issue with a file
-            return """WHERE EXISTS (
+            clauses.append("""EXISTS (
                 SELECT 1 FROM issues i
                 INNER JOIN issues_files if ON i.id = if.issue_id
                 WHERE i.volume_id = volumes.id
-            )"""
+            )""")
 
-        return ''
+        elif filter == LibraryFilter.RECENTLY_ADDED_7:
+            clauses.append("created_at >= ?")
+            params.append(round(time()) - 7 * 24 * 60 * 60)
+
+        elif filter == LibraryFilter.RECENTLY_ADDED_30:
+            clauses.append("created_at >= ?")
+            params.append(round(time()) - 30 * 24 * 60 * 60)
+
+        elif filter == LibraryFilter.RECENTLY_ADDED_90:
+            clauses.append("created_at >= ?")
+            params.append(round(time()) - 90 * 24 * 60 * 60)
+
+        elif filter == LibraryFilter.HAS_DESCRIPTION:
+            clauses.append("description IS NOT NULL")
+            clauses.append("TRIM(description) != ''")
+
+        if publisher:
+            clauses.append("publisher = ?")
+            params.append(publisher)
+
+        if has_description is True:
+            clauses.append("description IS NOT NULL")
+            clauses.append("TRIM(description) != ''")
+
+        elif has_description is False:
+            clauses.append("(description IS NULL OR TRIM(description) = '')")
+
+        if not clauses:
+            return '', []
+
+        return f"WHERE {' AND '.join(clauses)}", params
 
     @classmethod
     def get_volume_count(
         cls,
         filter: Union[LibraryFilter, int, None] = None,
-        query: str = ''
+        query: str = '',
+        publisher: Union[str, None] = None,
+        has_description: Union[bool, None] = None
     ) -> int:
         """Get the total number of volumes matching the filter and query.
         Uses an efficient COUNT query without fetching full data.
@@ -967,7 +1001,11 @@ class Library:
         Returns:
             int: The count of matching volumes.
         """
-        sql_filter = cls._get_filter_clause(filter)
+        sql_filter, params = cls._get_filter_clause(
+            filter,
+            publisher=publisher,
+            has_description=has_description
+        )
 
         if query:
             like_clause = "WHERE title LIKE ?"
@@ -975,11 +1013,12 @@ class Library:
                 like_clause = sql_filter + " AND title LIKE ?"
             result = get_db().execute(
                 f"SELECT COUNT(*) FROM volumes {like_clause};",
-                (f'%{query}%',)
+                [*params, f'%{query}%']
             ).exists()
         else:
             result = get_db().execute(
-                f"SELECT COUNT(*) FROM volumes {sql_filter};"
+                f"SELECT COUNT(*) FROM volumes {sql_filter};",
+                params
             ).exists()
 
         return result or 0
@@ -991,7 +1030,9 @@ class Library:
         filter: Union[LibraryFilter, int, None] = None,
         offset: int = 0,
         limit: int = 0,
-        minimal: bool = False
+        minimal: bool = False,
+        publisher: Union[str, None] = None,
+        has_description: Union[bool, None] = None
     ) -> List[Dict[str, Any]]:
         """Get all the volumes in the library.
 
@@ -1016,13 +1057,17 @@ class Library:
         Returns:
             List[Dict[str, Any]]: The list of volumes in the library.
         """
-        sql_filter = cls._get_filter_clause(filter)
+        sql_filter, filter_params = cls._get_filter_clause(
+            filter,
+            publisher=publisher,
+            has_description=has_description
+        )
 
         pagination = ''
-        params: list = []
+        params: list = [*filter_params]
         if limit > 0:
             pagination = 'LIMIT ? OFFSET ?'
-            params = [limit, offset]
+            params.extend([limit, offset])
 
         description_col = ",\n                description" if not minimal else ""
 
@@ -1081,7 +1126,9 @@ class Library:
         filter: Union[LibraryFilter, None] = None,
         offset: int = 0,
         limit: int = 0,
-        minimal: bool = False
+        minimal: bool = False,
+        publisher: Union[str, None] = None,
+        has_description: Union[bool, None] = None
     ) -> List[Dict[str, Any]]:
         """Search in the library with a query.
 
@@ -1113,7 +1160,11 @@ class Library:
                 cv_id = to_number_cv_id((query,))[0]
                 volumes = cls.get_public_volumes(
                     sort, cv_id,
-                    offset=offset, limit=limit, minimal=minimal
+                    offset=offset,
+                    limit=limit,
+                    minimal=minimal,
+                    publisher=publisher,
+                    has_description=has_description
                 )
 
             except ValueError:
@@ -1122,7 +1173,13 @@ class Library:
         else:
             # Get all volumes (with filter) and apply title matching.
             # No LIMIT/OFFSET at DB level since match_title is Python-side.
-            all_volumes = cls.get_public_volumes(sort, filter, minimal=minimal)
+            all_volumes = cls.get_public_volumes(
+                sort,
+                filter,
+                minimal=minimal,
+                publisher=publisher,
+                has_description=has_description
+            )
             matched = [
                 v
                 for v in all_volumes
@@ -1143,7 +1200,9 @@ class Library:
     def search_count(
         cls,
         query: str,
-        filter: Union[LibraryFilter, None] = None
+        filter: Union[LibraryFilter, None] = None,
+        publisher: Union[str, None] = None,
+        has_description: Union[bool, None] = None
     ) -> int:
         """Count search results without fetching full data.
 
@@ -1157,20 +1216,43 @@ class Library:
         if query.startswith(('4050-', 'cv:')):
             try:
                 cv_id = to_number_cv_id((query,))[0]
-                return cls.get_volume_count(cv_id)
+                return cls.get_volume_count(
+                    cv_id,
+                    publisher=publisher,
+                    has_description=has_description
+                )
             except ValueError:
                 return 0
 
         # For text search, we need Python-side match_title,
         # so we must fetch titles and count matches
-        sql_filter = cls._get_filter_clause(filter)
+        sql_filter, params = cls._get_filter_clause(
+            filter,
+            publisher=publisher,
+            has_description=has_description
+        )
         titles = get_db().execute(
-            f"SELECT title FROM volumes {sql_filter};"
+            f"SELECT title FROM volumes {sql_filter};",
+            params
         ).fetchall()
         return sum(
             1 for (title,) in titles
             if match_title(title, query, allow_contains=True)
         )
+
+    @classmethod
+    def get_publishers(cls) -> List[str]:
+        """Get distinct non-empty publisher names for quick filtering."""
+        result = get_db().execute(
+            """
+            SELECT DISTINCT publisher
+            FROM volumes
+            WHERE publisher IS NOT NULL
+                AND TRIM(publisher) != ''
+            ORDER BY publisher COLLATE NOCASE;
+            """
+        ).fetchall()
+        return [p[0] for p in result]
 
     @classmethod
     def get_stats(cls) -> Dict[str, int]:
@@ -1345,6 +1427,7 @@ class Library:
                     monitor_new_issues,
                     root_folder,
                     custom_folder,
+                    created_at,
                     last_cv_fetch,
                     special_version,
                     special_version_locked
@@ -1353,6 +1436,7 @@ class Library:
                     :year, :publisher, :volume_number, :description,
                     :site_url, :monitored, :monitor_new_issues,
                     :root_folder, :custom_folder,
+                    :created_at,
                     :last_cv_fetch, :special_version, :special_version_locked
                 );
                 """,
@@ -1369,6 +1453,7 @@ class Library:
                     "monitor_new_issues": monitor_new_issues,
                     "root_folder": root_folder.id,
                     "custom_folder": volume_folder is not None,
+                    "created_at": round(time()),
                     "last_cv_fetch": round(time()),
                     "special_version": None,
                     "special_version_locked": special_version is not None

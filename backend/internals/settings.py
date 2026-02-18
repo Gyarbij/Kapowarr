@@ -107,7 +107,7 @@ class PublicSettingsValues:
 
     date_type: DateType = DateType.COVER_DATE
 
-    library_display_mode: str = 'pagination'
+    library_display_mode: str = 'virtual_scroll'
 
     def todict(self, to_public: bool = True) -> Dict[str, Any]:
         """Convert the dataclass to a dictionary.
@@ -524,7 +524,10 @@ class Settings(metaclass=Singleton):
             converted_value = value
 
         elif key == 'library_display_mode':
-            if value not in ('pagination', 'scroll'):
+            if value == 'scroll':
+                converted_value = 'virtual_scroll'
+
+            if converted_value not in ('virtual_scroll', 'pagination'):
                 raise InvalidKeyValue(key, value)
 
         elif key == 'flaresolverr_base_url':

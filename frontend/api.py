@@ -127,7 +127,8 @@ def extract_key(request, key: str, check_existence: bool = True) -> Any:
 
         elif key in (
             'root_folder_id', 'root_folder',
-            'offset', 'limit', 'index'
+            'offset', 'limit', 'index',
+            'page', 'per_page'
         ):
             try:
                 value = int(value)
@@ -748,6 +749,32 @@ def api_volumes():
         filter = extract_key(request, 'filter', False)
         offset = extract_key(request, 'offset', False)
         limit = extract_key(request, 'limit', False)
+        page = extract_key(request, 'page', False)
+        per_page = extract_key(request, 'per_page', False)
+
+        publisher = request.values.get('publisher') or None
+        has_description_raw = request.values.get('has_description')
+        has_description = None
+        if has_description_raw is not None:
+            if has_description_raw == 'true':
+                has_description = True
+            elif has_description_raw == 'false':
+                has_description = False
+            else:
+                raise InvalidKeyValue('has_description', has_description_raw)
+
+        if per_page is not None:
+            if per_page < 0:
+                raise InvalidKeyValue('per_page', per_page)
+
+            if page is None:
+                page = 1
+
+            if page < 1:
+                raise InvalidKeyValue('page', page)
+
+            limit = per_page
+            offset = 0 if per_page == 0 else (page - 1) * per_page
 
         # 'minimal' param: strip description for lighter payloads
         minimal_raw = request.values.get('minimal', 'false')
@@ -756,22 +783,52 @@ def api_volumes():
         if query:
             volumes = Library.search(
                 query, sort, filter,
-                offset=offset, limit=limit, minimal=minimal
+                offset=offset,
+                limit=limit,
+                minimal=minimal,
+                publisher=publisher,
+                has_description=has_description
             )
-            total = Library.search_count(query, filter)
+            total = Library.search_count(
+                query,
+                filter,
+                publisher=publisher,
+                has_description=has_description
+            )
         else:
             volumes = Library.get_public_volumes(
                 sort, filter,
-                offset=offset, limit=limit, minimal=minimal
+                offset=offset,
+                limit=limit,
+                minimal=minimal,
+                publisher=publisher,
+                has_description=has_description
             )
-            total = Library.get_volume_count(filter)
+            total = Library.get_volume_count(
+                filter,
+                publisher=publisher,
+                has_description=has_description
+            )
 
-        return return_api({
+        result: Dict[str, Any] = {
             'volumes': volumes,
             'total': total,
             'offset': offset,
             'limit': limit
-        })
+        }
+
+        if per_page is not None:
+            total_pages = 1
+            if per_page > 0:
+                total_pages = max(1, (total + per_page - 1) // per_page)
+
+            result.update({
+                'page': page,
+                'per_page': per_page,
+                'total_pages': total_pages
+            })
+
+        return return_api(result)
 
     elif request.method == 'POST':
         data: dict = request.get_json()
@@ -835,6 +892,13 @@ def api_volumes_stats():
     return return_api(result)
 
 
+@api.route('/volumes/publishers', methods=['GET'])
+@error_handler
+@auth
+def api_volumes_publishers():
+    return return_api(Library.get_publishers())
+
+
 @api.route('/volumes/<int:id>', methods=['GET', 'PUT', 'DELETE'])
 @error_handler
 @auth
@@ -885,7 +949,23 @@ def api_volume(id: int):
 @error_handler
 @auth
 def api_volume_cover(id: int):
+    size = request.values.get('size')
     cover = Library.get_volume(id).get_cover()
+
+    if size == 'thumb':
+        try:
+            from PIL import Image  # type: ignore
+
+            image = Image.open(cover)
+            image.thumbnail((200, 300))
+            output = BytesIO()
+            image.save(output, format='JPEG', optimize=True, quality=85)
+            output.seek(0)
+            cover = output
+
+        except ImportError:
+            cover.seek(0)
+
     return send_file(
         cover,
         mimetype='image/jpeg'
@@ -1379,6 +1459,23 @@ def api_mass_editor():
         raise InvalidKeyValue('args', args)
 
     run_mass_editor_action(action, volume_ids, **args)
+    return return_api({})
+
+
+# =====================
+# Files
+# =====================
+@api.route('/files/<int:f_id>', methods=['GET', 'DELETE'])
+@error_handler
+@auth
+def api_files(f_id: int):
+    if request.method == 'GET':
+        result = FilesDB.fetch(file_id=f_id)[0]
+        return return_api(result)
+
+    elif request.method == 'DELETE':
+        delete_issue_file(f_id)
+        return return_api({})
     return return_api({})
 
 

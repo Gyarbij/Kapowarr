@@ -379,12 +379,17 @@ class LibraryFilter(BaseEnum):
     """
 
     WANTED = "wanted"
+    MISSING_MONITORED = "missing_monitored"
     MONITORED = "monitored"
     UNMONITORED = "unmonitored"
     MISSING = "missing"
     COMPLETE = "complete"
     NO_ISSUES = "no_issues"
     DOWNLOADED = "downloaded"
+    RECENTLY_ADDED_7 = "recently_added_7"
+    RECENTLY_ADDED_30 = "recently_added_30"
+    RECENTLY_ADDED_90 = "recently_added_90"
+    HAS_DESCRIPTION = "has_description"
 
 
 class MonitorScheme(BaseEnum):

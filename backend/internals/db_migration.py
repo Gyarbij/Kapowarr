@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from asyncio import run
+from datetime import datetime
 from typing import Callable, Dict, List
 
 from backend.base.logging import LOGGER
@@ -1170,4 +1171,38 @@ def _migrate_remove_unsupported_source_blocklist_entries():
         "DELETE FROM blocklist WHERE reason = ?;",
         (2,) # Source not supported
     )
+    return
+
+
+@DatabaseMigrationHandler.register_handler(44)
+def _migrate_add_volume_indexes_and_created_at():
+    cursor = get_db()
+
+    columns = cursor.execute("PRAGMA table_info(volumes);").fetchall()
+    existing_columns = {column[1] for column in columns}
+    if 'created_at' not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE volumes ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;"
+        )
+
+    cursor.execute(
+        "UPDATE volumes SET created_at = ? WHERE created_at = 0 OR created_at IS NULL;",
+        (round(datetime.now().timestamp()),)
+    )
+
+    cursor.executescript("""
+        CREATE INDEX IF NOT EXISTS volumes_title_index
+            ON volumes(title);
+        CREATE INDEX IF NOT EXISTS volumes_sort_index
+            ON volumes(title, year, volume_number);
+        CREATE INDEX IF NOT EXISTS volumes_publisher_sort_index
+            ON volumes(publisher, title, year, volume_number);
+        CREATE INDEX IF NOT EXISTS volumes_monitored_index
+            ON volumes(monitored);
+        CREATE INDEX IF NOT EXISTS volumes_created_at_index
+            ON volumes(created_at);
+        CREATE INDEX IF NOT EXISTS issues_volume_monitored_index
+            ON issues(volume_id, monitored);
+    """)
+
     return

@@ -368,6 +368,7 @@ CREATE TABLE IF NOT EXISTS volumes(
     root_folder INTEGER NOT NULL,
     folder TEXT,
     custom_folder BOOL NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT 0,
     last_cv_fetch INTEGER(8) DEFAULT 0,
     special_version VARCHAR(255),
     special_version_locked BOOL NOT NULL DEFAULT 0,
@@ -382,6 +383,16 @@ CREATE TABLE IF NOT EXISTS volumes_covers(
 );
 CREATE INDEX IF NOT EXISTS volumes_covers_volume_id_index
     ON volumes_covers(volume_id);
+CREATE INDEX IF NOT EXISTS volumes_title_index
+    ON volumes(title);
+CREATE INDEX IF NOT EXISTS volumes_sort_index
+    ON volumes(title, year, volume_number);
+CREATE INDEX IF NOT EXISTS volumes_publisher_sort_index
+    ON volumes(publisher, title, year, volume_number);
+CREATE INDEX IF NOT EXISTS volumes_monitored_index
+    ON volumes(monitored);
+CREATE INDEX IF NOT EXISTS volumes_created_at_index
+    ON volumes(created_at);
 CREATE TABLE IF NOT EXISTS issues(
     id INTEGER PRIMARY KEY,
     volume_id INTEGER NOT NULL,
@@ -400,6 +411,8 @@ CREATE INDEX IF NOT EXISTS issues_volume_number_index
     ON issues(volume_id, calculated_issue_number);
 CREATE INDEX IF NOT EXISTS issues_volume_index
     ON issues(volume_id);
+CREATE INDEX IF NOT EXISTS issues_volume_monitored_index
+    ON issues(volume_id, monitored);
 CREATE TABLE IF NOT EXISTS files(
     id INTEGER PRIMARY KEY,
     filepath TEXT UNIQUE NOT NULL,
