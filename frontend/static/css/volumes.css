@@ -72,6 +72,12 @@ main:not(
 	padding-right: 0;
 }
 
+#library-container:has(.virtual-mode) #lib-stats {
+	padding-top: 0.75rem;
+	max-height: 12rem;
+	overflow: hidden;
+}
+
 main:has(#massedit-toggle:checked) #library-container {
 	overflow-y: hidden;
 }
