@@ -288,7 +288,7 @@ const default_values = {
 	'lib_sorting': 'title',
 	'lib_view': 'posters',
 	'lib_filter': '',
-	'theme': 'dark',
+	'theme': 'system',
 	'translated_filter': 'all',
 	'api_key': null,
 	'last_login': 0,
@@ -354,19 +354,29 @@ usingApiKey()
 			const serverTheme = json.result.theme;
 			if (serverTheme && serverTheme !== getLocalStorage('theme')['theme']) {
 				setLocalStorage({'theme': serverTheme});
-				if (serverTheme === 'dark')
-					document.querySelector(':root').classList.add('dark-mode');
-				else
-					document.querySelector(':root').classList.remove('dark-mode');
+				applyTheme(serverTheme);
 			}
 		})
 		.catch(() => {});
 });
 
 setupLocalStorage();
-if (getLocalStorage('theme')['theme'] === 'dark')
-	document.querySelector(':root').classList.add('dark-mode');
+applyTheme(getLocalStorage('theme')['theme']);
 const socket = connectToWebSocket();
 
 document.querySelector('#toggle-nav').onclick = e =>
 	document.querySelector('#nav-bar').classList.toggle('show-nav');
+
+function applyTheme(value) {
+	if (value === 'dark') {
+		document.querySelector(':root').classList.add('dark-mode');
+	} else if (value === 'light') {
+		document.querySelector(':root').classList.remove('dark-mode');
+	} else if (value === 'system') {
+		const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+		if (prefersDark)
+			document.querySelector(':root').classList.add('dark-mode');
+		else
+			document.querySelector(':root').classList.remove('dark-mode');
+	}
+}

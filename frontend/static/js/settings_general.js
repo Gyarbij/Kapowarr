@@ -14,11 +14,7 @@ function fillSettings(api_key) {
 		
 		const serverTheme = json.result.theme || 'dark';
 		document.querySelector('#theme-input').value = serverTheme;
-		setLocalStorage({'theme': serverTheme});
-		if (serverTheme === 'dark')
-			document.querySelector(':root').classList.add('dark-mode');
-		else
-			document.querySelector(':root').classList.remove('dark-mode');
+		applyTheme(serverTheme);
 
 		if (json.result.auth_username && json.result.auth_password) {
 			document.querySelector('#auth-toggle').value = 'username-password';
@@ -96,9 +92,20 @@ usingApiKey()
 
 document.querySelector('#theme-input').onchange = e => {
 	const value = document.querySelector('#theme-input').value;
-	setLocalStorage({'theme': value});
-	if (value === 'dark')
-		document.querySelector(':root').classList.add('dark-mode');
-	else if (value === 'light')
-		document.querySelector(':root').classList.remove('dark-mode');
+	applyTheme(value);
 };
+
+function applyTheme(value) {
+	setLocalStorage({'theme': value});
+	if (value === 'dark') {
+		document.querySelector(':root').classList.add('dark-mode');
+	} else if (value === 'light') {
+		document.querySelector(':root').classList.remove('dark-mode');
+	} else if (value === 'system') {
+		const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+		if (prefersDark)
+			document.querySelector(':root').classList.add('dark-mode');
+		else
+			document.querySelector(':root').classList.remove('dark-mode');
+	}
+}

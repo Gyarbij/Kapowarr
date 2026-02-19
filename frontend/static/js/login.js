@@ -72,7 +72,13 @@ usingApiKey(false)
 		loadFields();
 })
 
-if (JSON.parse(localStorage.getItem('kapowarr') || {'theme': 'light'})['theme'] === 'dark')
+const storedTheme = JSON.parse(localStorage.getItem('kapowarr') || {'theme': 'light'})['theme'];
+if (storedTheme === 'dark')
 	document.querySelector(':root').classList.add('dark-mode');
+else if (storedTheme === 'system') {
+	const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+	if (prefersDark)
+		document.querySelector(':root').classList.add('dark-mode');
+}
 
 document.querySelector('#login-form').action = 'javascript:login();';

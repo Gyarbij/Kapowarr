@@ -536,7 +536,7 @@ class Settings(metaclass=Singleton):
                 raise InvalidKeyValue(key, value)
 
         elif key == 'theme':
-            if value not in ('light', 'dark'):
+            if value not in ('light', 'dark', 'system'):
                 raise InvalidKeyValue(key, value)
 
         elif key == 'flaresolverr_base_url':
