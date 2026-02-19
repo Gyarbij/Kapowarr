@@ -10,21 +10,6 @@
 	<script src="{{ url_for('static', filename='js/publishers.js') }}" defer></script>
 {% endblock %}
 
-{% block pre_build_els %}
-	<div class="publisher-card" data-cv-id="">
-		<h3 class="publisher-name"></h3>
-		<p class="publisher-volumes"></p>
-	</div>
-	<a href="" class="volume-card" data-cv-id="">
-		<img class="volume-cover" src="" alt="" loading="lazy">
-		<div class="volume-info">
-			<h3 class="volume-title"></h3>
-			<p class="volume-year"></p>
-			<span class="volume-badge in-library">In Library</span>
-		</div>
-	</a>
-{% endblock %}
-
 {% block windows %}
 	{{ loading_window("add-loading-window", "Adding volume...") }}
 

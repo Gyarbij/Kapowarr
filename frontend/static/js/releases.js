@@ -8,12 +8,6 @@ const daysSelect = document.getElementById('days-select');
 const hideInLibraryCheckbox = document.getElementById('hide-in-library');
 const refreshButton = document.getElementById('refresh-button');
 
-// Pre-built card template
-const cardTemplate = document.querySelector('.release-card');
-if (cardTemplate) {
-	cardTemplate.remove();
-}
-
 let allReleases = [];
 let hideInLibrary = false;
 let rootFoldersLoaded = false;

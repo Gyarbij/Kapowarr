@@ -10,18 +10,6 @@
 	<script src="{{ url_for('static', filename='js/releases.js') }}" defer></script>
 {% endblock %}
 
-{% block pre_build_els %}
-	<div class="release-card" data-cv-id="" data-volume-cv-id="">
-		<img class="release-cover" src="" alt="" loading="lazy">
-		<div class="release-info">
-			<h3 class="release-title"></h3>
-			<p class="release-issue"></p>
-			<p class="release-date"></p>
-			<span class="release-badge in-library">In Library</span>
-		</div>
-	</div>
-{% endblock %}
-
 {% block windows %}
 	{{ loading_window("add-loading-window", "Adding volume...") }}
 

@@ -333,7 +333,10 @@ function showPublisherVolumes(publisher) {
 	emptyState.classList.add('hidden');
 	volumesGrid.innerHTML = '';
 
-	fetchAPI(`/publishers/${publisher.comicvine_id}/volumes`, _apiKey, { limit: 100 })
+	usingApiKey()
+	.then(api_key =>
+		fetchAPI(`/publishers/${publisher.comicvine_id}/volumes`, api_key, { limit: 100 })
+	)
 	.then(data => {
 		if (data.result) {
 			renderVolumes(data.result);

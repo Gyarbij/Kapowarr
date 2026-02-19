@@ -8,9 +8,9 @@
 
 #view-controls select {
 	padding: 0.4rem 0.8rem;
-	border-radius: var(--border-radius);
+	border-radius: var(--border-radius, 4px);
 	border: 1px solid var(--border-color);
-	background: var(--background-secondary);
+	background: var(--background-secondary, var(--foreground-color));
 	color: var(--text-color);
 	font-size: 0.9rem;
 	cursor: pointer;

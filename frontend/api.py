@@ -767,6 +767,11 @@ def api_volumes_metadata():
 
     source = _get_configured_metadata_source()
     volume = run(source.fetch_volume(comicvine_id))
+
+    # Remove non-JSON-serializable cover bytes and bulky issues list
+    volume.pop('cover', None)
+    volume.pop('issues', None)
+
     return return_api(volume)
 
 
