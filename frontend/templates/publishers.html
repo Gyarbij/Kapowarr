@@ -1,10 +1,12 @@
 {% extends "base.html" %}
-{% from "base.html" import icon_button %}
+{% from "base.html" import icon_button, window, loading_window %}
 {% block title %}Publishers{% endblock %}
 {% block css %}
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/window.css') }}">
 	<link rel="stylesheet" href="{{ url_for('static', filename='css/publishers.css') }}">
 {% endblock %}
 {% block js %}
+	<script src="{{ url_for('static', filename='js/window.js') }}" defer></script>
 	<script src="{{ url_for('static', filename='js/publishers.js') }}" defer></script>
 {% endblock %}
 
@@ -22,6 +24,83 @@
 		</div>
 	</a>
 {% endblock %}
+
+{% block windows %}
+	{{ loading_window("add-loading-window", "Adding volume...") }}
+
+	{% set add_content %}
+		<img src="" id="add-cover" alt="">
+		<form id="add-form">
+			<input type="hidden" id="comicvine-input" value="">
+			<table class="fold-table">
+				<tr>
+					<th><label for="rootfolder-input">Root Folder</label></th>
+					<td>
+						<select id="rootfolder-input"></select>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="volumefolder-input">Volume Folder</label></th>
+					<td>
+						<input type="text" id="volumefolder-input">
+					</td>
+				</tr>
+				<tr>
+					<th><label for="monitor-volume-input">Monitor Volume</label></th>
+					<td>
+						<select id="monitor-volume-input">
+							<option value="true" selected>Yes</option>
+							<option value="false">No</option>
+						</select>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="monitor-issues-input">Monitor New Issues</label></th>
+					<td>
+						<select id="monitor-issues-input">
+							<option value="true" selected>Yes</option>
+							<option value="false">No</option>
+						</select>
+						<p>When new issues come out, automatically monitor them.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="monitoring-scheme-input">Monitoring Scheme</label></th>
+					<td>
+						<select id="monitoring-scheme-input">
+							<option value="all" selected>All</option>
+							<option value="missing">Missing</option>
+							<option value="none">None</option>
+						</select>
+						<p>Choose which issues to monitor that have already been released.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="specialoverride-input">Special Version</label></th>
+					<td>
+						<select id="specialoverride-input">
+							<option value="auto" selected>Automatic</option>
+							<option value="">Normal Volume</option>
+							<option value="tpb">Trade Paper Back</option>
+							<option value="one-shot">One Shot</option>
+							<option value="hard-cover">Hard Cover</option>
+							<option value="omnibus">Omnibus</option>
+							<option value="volume-as-issue">Volume As Issue</option>
+						</select>
+					</td>
+				</tr>
+			</table>
+		</form>
+	{% endset %}
+
+	{% set add_submit %}
+		<label for="auto-search-input">Start search for missing volume</label>
+		<input type="checkbox" id="auto-search-input">
+		<button id="add-volume" type="submit" form="add-form">Add Volume</button>
+	{% endset %}
+
+	{{ window(False, "add-window", "Add volume", add_content, add_submit, "add-loading-window", False) }}
+{% endblock windows %}
 
 {% block right_side_header %}
 	<form id="search-container" class="icon-dark-color" aria-label="Search bar">

@@ -11,6 +11,23 @@ const searchForm = document.getElementById('search-container');
 const clearSearchBtn = document.getElementById('clear-search');
 const currentViewLabel = document.getElementById('current-view-label');
 
+let rootFoldersLoaded = false;
+
+const addWindowEls = {
+	form: document.querySelector('#add-form'),
+	title: document.querySelector('#add-window h2'),
+	cover: document.querySelector('#add-cover'),
+	cv_input: document.querySelector('#comicvine-input'),
+	monitor_volume_input: document.querySelector('#monitor-volume-input'),
+	monitor_issues_input: document.querySelector('#monitor-issues-input'),
+	monitoring_scheme: document.querySelector('#monitoring-scheme-input'),
+	root_folder_input: document.querySelector('#rootfolder-input'),
+	volume_folder_input: document.querySelector('#volumefolder-input'),
+	special_state_input: document.querySelector('#specialoverride-input'),
+	auto_search_input: document.querySelector('#auto-search-input'),
+	submit: document.querySelector('#add-volume')
+};
+
 // Major publishers (ComicVine IDs)
 const MAJOR_PUBLISHERS = {
 	31: 'Marvel',
@@ -75,7 +92,151 @@ function createVolumeCard(volume) {
 		</div>
 	`;
 
+	if (!volume.already_added) {
+		const actions = document.createElement('div');
+		actions.className = 'volume-actions';
+		actions.innerHTML = `
+			<button class="volume-action-button icon-dark-color" type="button" aria-label="Add volume">
+				<img src="${url_base}/static/img/download.svg" alt="">
+			</button>
+		`;
+		const actionBtn = actions.querySelector('button');
+		actionBtn.addEventListener('click', event => {
+			event.stopPropagation();
+			event.preventDefault();
+			showAddWindow(volume, actionBtn);
+		});
+		card.appendChild(actions);
+	}
+
 	return card;
+}
+
+function ensureRootFolders(api_key) {
+	if (rootFoldersLoaded) return Promise.resolve();
+	return fetchAPI('/rootfolder', api_key)
+	.then(json => {
+		addWindowEls.root_folder_input.innerHTML = '';
+		if (json.result.length) {
+			json.result.forEach(folder => {
+				const option = document.createElement('option');
+				option.value = folder.id;
+				option.innerText = folder.folder;
+				addWindowEls.root_folder_input.appendChild(option);
+			});
+			rootFoldersLoaded = true;
+		}
+	});
+}
+
+function fillAddWindow(volumeData, folderName) {
+	addWindowEls.title.innerText = volumeData.title || 'Add volume';
+	addWindowEls.cover.src = volumeData.cover_link || `${url_base}/static/img/placeholder.svg`;
+	addWindowEls.cv_input.value = volumeData.comicvine_id;
+	addWindowEls.volume_folder_input.value = folderName || '';
+	addWindowEls.form.dataset.volume_folder = folderName || '';
+	addWindowEls.submit.innerText = 'Add Volume';
+	addWindowEls.special_state_input.value = 'auto';
+
+	const monitoringPref = getLocalStorage(
+		'monitor_new_volume', 'monitor_new_issues', 'monitoring_scheme'
+	);
+	addWindowEls.monitor_volume_input.value = monitoringPref.monitor_new_volume;
+	addWindowEls.monitor_issues_input.value = monitoringPref.monitor_new_issues;
+	addWindowEls.monitoring_scheme.value = monitoringPref.monitoring_scheme;
+}
+
+function showAddWindow(volume, actionButton) {
+	if (!addWindowEls.form) return;
+	if (actionButton) actionButton.disabled = true;
+
+	usingApiKey()
+	.then(api_key => Promise.all([
+		ensureRootFolders(api_key),
+		fetchAPI('/volumes/metadata', api_key, { comicvine_id: volume.comicvine_id })
+			.then(volumeResponse => ({ api_key, volumeResponse }))
+	]))
+	.then(([, { api_key, volumeResponse }]) => {
+		if (!volumeResponse.result) {
+			throw new Error(volumeResponse.error || 'Failed to fetch volume');
+		}
+		const volumeData = volumeResponse.result;
+		const folderBody = {
+			comicvine_id: volumeData.comicvine_id,
+			title: volumeData.title,
+			year: volumeData.year || null,
+			volume_number: volumeData.volume_number,
+			publisher: volumeData.publisher || null
+		};
+		return Promise.all([
+			Promise.resolve(volumeData),
+			sendAPI('POST', '/volumes/search', api_key, {}, folderBody)
+				.then(response => response.json())
+		]);
+	})
+	.then(([volumeData, folderResponse]) => {
+		if (folderResponse.result?.folder) {
+			volumeData._volume_folder = folderResponse.result.folder;
+		}
+		fillAddWindow(volumeData, volumeData._volume_folder || '');
+		showWindow('add-window');
+	})
+	.catch(error => {
+		console.error('Error preparing add window:', error);
+	})
+	.finally(() => {
+		if (actionButton) actionButton.disabled = false;
+	});
+}
+
+function addVolume() {
+	showLoadWindow('add-window');
+	const volumeFolder = addWindowEls.volume_folder_input.value;
+
+	const data = {
+		comicvine_id: parseInt(addWindowEls.cv_input.value),
+		root_folder_id: parseInt(addWindowEls.root_folder_input.value),
+		monitor: addWindowEls.monitor_volume_input.value === 'true',
+		monitoring_scheme: addWindowEls.monitoring_scheme.value,
+		monitor_new_issues: addWindowEls.monitor_issues_input.value === 'true',
+		volume_folder: '',
+		special_version: addWindowEls.special_state_input.value || null,
+		auto_search: addWindowEls.auto_search_input.checked
+	};
+
+	if (volumeFolder !== '' && addWindowEls.form.dataset.volume_folder) {
+		if (volumeFolder !== addWindowEls.form.dataset.volume_folder) {
+			data.volume_folder = volumeFolder;
+		}
+	}
+
+	setLocalStorage({
+		monitor_new_volume: data.monitor,
+		monitor_new_issues: data.monitor_new_issues,
+		monitoring_scheme: data.monitoring_scheme
+	});
+
+	usingApiKey()
+	.then(api_key => sendAPI('POST', '/volumes', api_key, {}, data))
+	.then(response => response.json())
+	.then(json => {
+		const addedVolumeId = json.result?.id;
+		if (addedVolumeId && currentPublisher) {
+			showPublisherVolumes(currentPublisher);
+		}
+		closeWindow();
+	})
+	.catch(e => {
+		if (e.status === 509) {
+			addWindowEls.submit.innerText = 'ComicVine API rate limit reached';
+			showWindow('add-window');
+		} else if (e.status === 400) {
+			addWindowEls.submit.innerText = 'Volume folder is parent or child of other volume folder';
+			showWindow('add-window');
+		} else {
+			console.error(e);
+		}
+	});
 }
 
 // Render publishers
@@ -246,6 +407,10 @@ let _apiKey = null;
 usingApiKey()
 .then(api_key => {
 	_apiKey = api_key;
+	if (addWindowEls.form) {
+		addWindowEls.form.action = 'javascript:addVolume();';
+	}
+	ensureRootFolders(api_key);
 
 	refreshButton.addEventListener('click', () => {
 		if (currentPublisher) {

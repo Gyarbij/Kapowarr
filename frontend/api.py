@@ -755,6 +755,21 @@ def api_volumes_search():
         return return_api({'folder': folder})
 
 
+@api.route('/volumes/metadata', methods=['GET'])
+@error_handler
+@auth
+def api_volumes_metadata():
+    comicvine_id = extract_key(request, 'comicvine_id')
+    try:
+        comicvine_id = int(comicvine_id)
+    except (ValueError, TypeError):
+        raise InvalidKeyValue('comicvine_id', comicvine_id)
+
+    source = _get_configured_metadata_source()
+    volume = run(source.fetch_volume(comicvine_id))
+    return return_api(volume)
+
+
 @api.route('/volumes', methods=['GET', 'POST'])
 @error_handler
 @auth

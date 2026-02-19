@@ -4,9 +4,10 @@
 	display: flex;
 	align-items: center;
 	gap: 0.5rem;
-	background: var(--background-secondary);
+	background: var(--background-secondary, var(--foreground-color));
 	border-radius: var(--border-radius);
 	padding: 0.25rem 0.5rem;
+	border: 1px solid var(--border-color);
 }
 
 #search-container button {
@@ -61,12 +62,12 @@
 }
 
 .publisher-card {
-	background: var(--background-secondary);
+	background: var(--background-secondary, var(--foreground-color));
+	border: 1px solid var(--border-color);
 	border-radius: var(--border-radius);
 	padding: 1.25rem;
 	cursor: pointer;
 	transition: transform 0.2s ease, box-shadow 0.2s ease;
-	border: 2px solid transparent;
 }
 
 .publisher-card:hover {
@@ -90,7 +91,7 @@
 
 .publisher-volumes {
 	font-size: 0.85rem;
-	color: var(--text-secondary);
+	color: var(--text-secondary, var(--dimmed-text-color));
 	margin: 0;
 }
 
@@ -103,7 +104,8 @@
 }
 
 .volume-card {
-	background: var(--background-secondary);
+	background: var(--background-secondary, var(--foreground-color));
+	border: 1px solid var(--border-color);
 	border-radius: var(--border-radius);
 	overflow: hidden;
 	transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -115,6 +117,7 @@
 .volume-card:hover {
 	transform: translateY(-4px);
 	box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+	border-color: var(--accent-color);
 }
 
 .volume-card.in-library {
@@ -125,7 +128,7 @@
 	width: 100%;
 	aspect-ratio: 2/3;
 	object-fit: cover;
-	background: var(--background-tertiary);
+	background: var(--background-tertiary, var(--foreground-color));
 }
 
 .volume-info {
@@ -143,7 +146,7 @@
 
 .volume-year {
 	font-size: 0.8rem;
-	color: var(--text-secondary);
+	color: var(--text-secondary, var(--dimmed-text-color));
 	margin: 0;
 }
 
@@ -157,7 +160,7 @@
 	font-weight: 600;
 	text-transform: uppercase;
 	background: var(--accent-color);
-	color: var(--background-primary);
+	color: var(--background-primary, var(--dark-color));
 	display: none;
 }
 
@@ -171,7 +174,7 @@
 	justify-content: center;
 	align-items: center;
 	padding: 3rem;
-	color: var(--text-secondary);
+	color: var(--text-secondary, var(--dimmed-text-color));
 }
 
 .empty-state {
@@ -179,7 +182,7 @@
 	justify-content: center;
 	align-items: center;
 	padding: 3rem;
-	color: var(--text-secondary);
+	color: var(--text-secondary, var(--dimmed-text-color));
 }
 
 .hidden {
@@ -199,7 +202,7 @@
 	padding: 0.5rem 1rem;
 	border-radius: var(--border-radius);
 	border: 1px solid var(--border-color);
-	background: var(--background-secondary);
+	background: var(--background-secondary, var(--foreground-color));
 	color: var(--text-color);
 	cursor: pointer;
 	font-size: 0.85rem;
@@ -212,8 +215,79 @@
 
 .quick-filter-btn.active {
 	background: var(--accent-color);
-	color: var(--background-primary);
+	color: var(--background-primary, var(--dark-color));
 	border-color: var(--accent-color);
+}
+
+/* Add volume modal reuse */
+#add-window h2 {
+	font-weight: 400;
+	white-space: nowrap;
+	overflow-x: hidden;
+	text-overflow: ellipsis;
+}
+
+#add-cover {
+	width: 10rem;
+	height: 15rem;
+}
+
+.window .window-content {
+	flex-direction: row;
+}
+
+#add-form {
+	flex-grow: 1;
+	width: 75%;
+}
+
+#add-form tbody {
+	vertical-align: text-top;
+}
+
+#add-volume {
+	background-color: var(--success-color);
+}
+
+@media (max-width: 720px) {
+	#add-cover {
+		display: none;
+	}
+}
+
+.volume-actions {
+	position: absolute;
+	left: 0.5rem;
+	top: 0.5rem;
+	display: flex;
+	gap: 0.35rem;
+}
+
+.volume-action-button {
+	width: 2rem;
+	height: 2rem;
+	border-radius: 999px;
+	background: var(--foreground-color);
+	border: 1px solid var(--border-color);
+	box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.volume-action-button:hover {
+	border-color: var(--accent-color);
+	transform: translateY(-1px);
+}
+
+.volume-action-button img {
+	width: 1.1rem;
+	height: 1.1rem;
+}
+
+.volume-action-button:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
 }
 
 /* Responsive */
