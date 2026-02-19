@@ -438,3 +438,39 @@
 #remote-mapping-list > tr > td {
 	border-top: 1px solid var(--border-color);
 }
+
+/*  */
+/* Input with inline button (e.g. test buttons) */
+/*  */
+.input-with-button {
+	display: flex;
+	gap: 0.5rem;
+	align-items: center;
+	width: min(50rem, 100%);
+}
+
+.input-with-button input {
+	flex: 1;
+	width: unset !important;
+}
+
+.input-with-button button {
+	padding: 0.5rem 1rem;
+	border-radius: 6px;
+	border: 2px solid var(--border-color);
+	background-color: var(--tool-bar-color);
+	color: var(--text-color);
+	font-size: 0.9rem;
+	cursor: pointer;
+	white-space: nowrap;
+	transition: background-color 200ms, color 200ms;
+}
+
+.input-with-button button:hover {
+	background-color: var(--accent-color);
+}
+
+.input-with-button button:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}

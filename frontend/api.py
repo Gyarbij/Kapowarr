@@ -1033,7 +1033,7 @@ def api_rename_issue(id: int):
 @error_handler
 @auth
 def api_releases_new():
-    """Get new comic releases from ComicVine.
+    """Get new comic releases from the configured metadata source.
     
     Query params:
         start_date: Start of date range (YYYY-MM-DD)
@@ -1041,6 +1041,9 @@ def api_releases_new():
         limit: Max results (default 100)
     """
     from datetime import datetime, timedelta
+
+    from backend.implementations.metadata_sources import (MetadataSourceType,
+                                                          get_metadata_source)
     
     start_date = extract_key(request, 'start_date', False)
     end_date = extract_key(request, 'end_date', False)
@@ -1054,7 +1057,9 @@ def api_releases_new():
     
     limit = int(limit) if limit else 100
     
-    releases = run(ComicVine().get_new_releases(
+    source_type = MetadataSourceType(Settings().sv.metadata_source)
+    source = get_metadata_source(source_type)
+    releases = run(source.get_new_releases(
         start_date=start_date,
         end_date=end_date,
         limit=limit
@@ -1066,15 +1071,20 @@ def api_releases_new():
 @error_handler
 @auth
 def api_releases_upcoming():
-    """Get upcoming comic releases from ComicVine.
+    """Get upcoming comic releases from the configured metadata source.
     
     Query params:
         days_ahead: Days to look ahead (default 30)
     """
+    from backend.implementations.metadata_sources import (MetadataSourceType,
+                                                          get_metadata_source)
+
     days_ahead = extract_key(request, 'days_ahead', False)
     days_ahead = int(days_ahead) if days_ahead else 30
     
-    releases = run(ComicVine().get_upcoming_releases(days_ahead=days_ahead))
+    source_type = MetadataSourceType(Settings().sv.metadata_source)
+    source = get_metadata_source(source_type)
+    releases = run(source.get_upcoming_releases(days_ahead=days_ahead))
     return return_api(releases)
 
 
@@ -1082,15 +1092,20 @@ def api_releases_upcoming():
 @error_handler
 @auth
 def api_releases_recent():
-    """Get recently released comics from ComicVine.
+    """Get recently released comics from the configured metadata source.
     
     Query params:
         days_back: Days to look back (default 7)
     """
+    from backend.implementations.metadata_sources import (MetadataSourceType,
+                                                          get_metadata_source)
+
     days_back = extract_key(request, 'days_back', False)
     days_back = int(days_back) if days_back else 7
     
-    releases = run(ComicVine().get_recent_releases(days_back=days_back))
+    source_type = MetadataSourceType(Settings().sv.metadata_source)
+    source = get_metadata_source(source_type)
+    releases = run(source.get_recent_releases(days_back=days_back))
     return return_api(releases)
 
 
@@ -1153,15 +1168,20 @@ def api_library_upcoming():
 @error_handler
 @auth
 def api_publishers():
-    """Get list of publishers from ComicVine.
+    """Get list of publishers from the configured metadata source.
     
     Query params:
         limit: Max results (default 50)
     """
+    from backend.implementations.metadata_sources import (MetadataSourceType,
+                                                          get_metadata_source)
+
     limit = extract_key(request, 'limit', False)
     limit = int(limit) if limit else 50
     
-    publishers = run(ComicVine().get_publishers(limit=limit))
+    source_type = MetadataSourceType(Settings().sv.metadata_source)
+    source = get_metadata_source(source_type)
+    publishers = run(source.get_publishers(limit=limit))
     return return_api(publishers)
 
 
@@ -1174,14 +1194,64 @@ def api_publisher_volumes(publisher_id: int):
     Query params:
         limit: Max results (default 100)
     """
+    from backend.implementations.metadata_sources import (MetadataSourceType,
+                                                          get_metadata_source)
+
     limit = extract_key(request, 'limit', False)
     limit = int(limit) if limit else 100
     
-    volumes = run(ComicVine().search_publisher_volumes(
-        publisher_cv_id=publisher_id,
+    source_type = MetadataSourceType(Settings().sv.metadata_source)
+    source = get_metadata_source(source_type)
+    volumes = run(source.search_publisher_volumes(
+        publisher_id=publisher_id,
         limit=limit
     ))
     return return_api(volumes)
+
+
+# =====================
+# Metadata Sources
+# =====================
+
+
+@api.route('/metadata/sources', methods=['GET'])
+@error_handler
+@auth
+def api_metadata_sources():
+    """Get list of available metadata sources."""
+    from backend.implementations.metadata_sources import get_available_sources
+    
+    sources = get_available_sources()
+    current_source = Settings().sv.metadata_source
+    
+    return return_api({
+        'sources': sources,
+        'current': current_source
+    })
+
+
+@api.route('/metadata/sources/test', methods=['POST'])
+@error_handler
+@auth
+def api_metadata_source_test():
+    """Test a metadata source's credentials.
+    
+    Body:
+        source: The source type to test (comicvine or metron)
+    """
+    from backend.implementations.metadata_sources import (MetadataSourceType,
+                                                          get_metadata_source)
+    
+    data = request.get_json()
+    source_type = data.get('source', 'comicvine')
+    
+    try:
+        source_enum = MetadataSourceType(source_type)
+        source = get_metadata_source(source_enum)
+        valid = source.test_key()
+        return return_api({'valid': valid})
+    except ValueError:
+        raise InvalidKeyValue('source', source_type)
 
 
 # =====================
@@ -1620,6 +1690,52 @@ def api_mass_editor():
         raise InvalidKeyValue('args', args)
 
     run_mass_editor_action(action, volume_ids, **args)
+    return return_api({})
+
+
+# =====================
+# Files
+# =====================
+@api.route('/files/<int:f_id>', methods=['GET', 'DELETE'])
+@error_handler
+@auth
+def api_files(f_id: int):
+    if request.method == 'GET':
+        result = FilesDB.fetch(file_id=f_id)[0]
+        return return_api(result)
+
+    elif request.method == 'DELETE':
+        delete_issue_file(f_id)
+        return return_api({})
+    return return_api({})
+
+
+# =====================
+# Files
+# =====================
+@api.route('/files/<int:f_id>', methods=['GET', 'DELETE'])
+@error_handler
+@auth
+def api_files(f_id: int):
+    if request.method == 'GET':
+        result = FilesDB.fetch(file_id=f_id)[0]
+        return return_api(result)
+
+    elif request.method == 'DELETE':
+        delete_issue_file(f_id)
+        return return_api({})
+    return return_api({})
+@api.route('/files/<int:f_id>', methods=['GET', 'DELETE'])
+@error_handler
+@auth
+def api_files(f_id: int):
+    if request.method == 'GET':
+        result = FilesDB.fetch(file_id=f_id)[0]
+        return return_api(result)
+
+    elif request.method == 'DELETE':
+        delete_issue_file(f_id)
+        return return_api({})
     return return_api({})
 
 

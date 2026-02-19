@@ -25,6 +25,7 @@ from backend.implementations.volumes import Volume, refresh_and_scan
 from backend.internals.db import close_db, get_db
 from backend.internals.server import (TaskAddedEvent, TaskEndedEvent,
                                       TaskStatusEvent, WebSocket)
+from backend.internals.settings import Settings
 
 
 class Task(ABC):
@@ -513,13 +514,15 @@ class RefreshReleaseCache(Task):
         from datetime import datetime, timedelta
         from time import time as current_time
 
-        from backend.implementations.comicvine import ComicVine
+        from backend.implementations.metadata_sources import (
+            MetadataSourceType, get_metadata_source)
 
         self.message = 'Refreshing release cache'
         WebSocket().emit(TaskStatusEvent(self.message))
 
         cursor = get_db(force_new=True)
-        cv = ComicVine()
+        source_type = MetadataSourceType(Settings().sv.metadata_source)
+        source = get_metadata_source(source_type)
         now = current_time()
 
         try:
@@ -533,7 +536,7 @@ class RefreshReleaseCache(Task):
             today_str = today.strftime('%Y-%m-%d')
 
             # Fetch recent and upcoming in one call
-            releases = async_run(cv.get_new_releases(past, future))
+            releases = async_run(source.get_new_releases(past, future))
 
             # Clear old cache entries (older than 24 hours)
             cursor.execute(
@@ -572,7 +575,7 @@ class RefreshReleaseCache(Task):
             self.message = 'Fetching publishers'
             WebSocket().emit(TaskStatusEvent(self.message))
 
-            publishers = async_run(cv.get_publishers(limit=100))
+            publishers = async_run(source.get_publishers(limit=100))
 
             for pub in publishers:
                 cursor.execute(
@@ -593,7 +596,7 @@ class RefreshReleaseCache(Task):
             LOGGER.info(f'Refreshed publisher cache with {len(publishers)} publishers')
 
         except InvalidComicVineApiKey:
-            LOGGER.warning('Invalid ComicVine API key, skipping release cache refresh')
+            LOGGER.warning('Invalid API key, skipping release cache refresh')
 
         return
 

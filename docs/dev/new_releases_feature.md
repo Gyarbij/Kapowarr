@@ -137,10 +137,13 @@ class MetadataSource(Protocol):
    - [x] Publisher filter on volumes page (already existed)
    - [x] Navigation link added
 
-5. **Phase 5: Multi-Source** (future)
-   - Abstract base class
-   - Metron integration
-   - Source selection in settings
+5. **Phase 5: Multi-Source** ✅ COMPLETE
+   - [x] Abstract base class (`MetadataSource` ABC in `metadata_sources/base.py`)
+   - [x] ComicVine adapter (`ComicVineSource` wrapping existing `ComicVine` class)
+   - [x] Metron integration (`MetronSource` with Basic Auth, series/issue/publisher support)
+   - [x] Source selection in settings (dropdown, credential inputs, test buttons)
+   - [x] API endpoints wired to use configured metadata source
+   - [x] Source registry pattern with `register_source` decorator
 
 ## ComicVine API Notes
 

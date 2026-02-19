@@ -63,6 +63,9 @@ class PublicSettingsValues:
     auth_password: str = ''
 
     comicvine_api_key: str = ''
+    metron_username: str = ''
+    metron_password: str = ''
+    metadata_source: str = 'comicvine'  # comicvine or metron
     api_key: str = ''
     flaresolverr_base_url: str = ''
 
