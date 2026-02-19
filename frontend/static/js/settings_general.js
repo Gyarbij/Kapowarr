@@ -12,13 +12,20 @@ function fillSettings(api_key) {
 		document.querySelector('#log-level-input').value = json.result.log_level;
 		document.querySelector('#library-display-mode-input').value = json.result.library_display_mode;
 		
+		const serverTheme = json.result.theme || 'dark';
+		document.querySelector('#theme-input').value = serverTheme;
+		setLocalStorage({'theme': serverTheme});
+		if (serverTheme === 'dark')
+			document.querySelector(':root').classList.add('dark-mode');
+		else
+			document.querySelector(':root').classList.remove('dark-mode');
+
 		if (json.result.auth_username && json.result.auth_password) {
 			document.querySelector('#auth-toggle').value = 'username-password';
 		} else if (json.result.auth_password) {
 			document.querySelector('#auth-toggle').value = 'password';
 		};
 	});
-	document.querySelector('#theme-input').value = getLocalStorage('theme')['theme'];
 };
 
 function saveSettings(api_key) {
@@ -34,7 +41,8 @@ function saveSettings(api_key) {
 		'comicvine_api_key': document.querySelector('#cv-input').value,
 		'flaresolverr_base_url': document.querySelector('#flaresolverr-input').value,
 		'log_level': parseInt(document.querySelector('#log-level-input').value),
-		'library_display_mode': document.querySelector('#library-display-mode-input').value
+		'library_display_mode': document.querySelector('#library-display-mode-input').value,
+		'theme': document.querySelector('#theme-input').value
 	};
 	
 	const auth_toggle = document.querySelector('#auth-toggle');

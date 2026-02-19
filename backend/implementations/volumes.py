@@ -963,6 +963,30 @@ class Library:
             clauses.append("created_at >= ?")
             params.append(round(time()) - 90 * 24 * 60 * 60)
 
+        elif filter == LibraryFilter.RECENTLY_RELEASED_7:
+            clauses.append("""EXISTS (
+                SELECT 1 FROM issues
+                WHERE volume_id = volumes.id
+                    AND date IS NOT NULL
+                    AND date >= date('now', '-7 days')
+            )""")
+
+        elif filter == LibraryFilter.RECENTLY_RELEASED_30:
+            clauses.append("""EXISTS (
+                SELECT 1 FROM issues
+                WHERE volume_id = volumes.id
+                    AND date IS NOT NULL
+                    AND date >= date('now', '-30 days')
+            )""")
+
+        elif filter == LibraryFilter.RECENTLY_RELEASED_90:
+            clauses.append("""EXISTS (
+                SELECT 1 FROM issues
+                WHERE volume_id = volumes.id
+                    AND date IS NOT NULL
+                    AND date >= date('now', '-90 days')
+            )""")
+
         elif filter == LibraryFilter.HAS_DESCRIPTION:
             clauses.append("description IS NOT NULL")
             clauses.append("TRIM(description) != ''")

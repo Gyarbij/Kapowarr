@@ -389,6 +389,9 @@ class LibraryFilter(BaseEnum):
     RECENTLY_ADDED_7 = "recently_added_7"
     RECENTLY_ADDED_30 = "recently_added_30"
     RECENTLY_ADDED_90 = "recently_added_90"
+    RECENTLY_RELEASED_7 = "recently_released_7"
+    RECENTLY_RELEASED_30 = "recently_released_30"
+    RECENTLY_RELEASED_90 = "recently_released_90"
     HAS_DESCRIPTION = "has_description"
 
 
