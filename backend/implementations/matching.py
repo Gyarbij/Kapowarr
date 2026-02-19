@@ -224,7 +224,8 @@ def folder_extraction_filter(
     file_data: FilenameData,
     volume_data: VolumeData,
     volume_issues: List[IssueData],
-    end_year: Union[int, None]
+    end_year: Union[int, None],
+    trust_source: bool = False
 ) -> bool:
     """The filter applied to the files when extracting from a folder,
     which decides whether a file is relevant or not.
@@ -234,6 +235,11 @@ def folder_extraction_filter(
         volume_data (VolumeData): The data of the volume.
         volume_issues (List[IssueData]): The data of the issues of the volume.
         end_year (Union[int, None]): The year of last issue or volume year.
+        trust_source (bool, optional): If True, relax title matching because
+            the source (e.g. downloaded archive) was already validated to
+            belong to this volume. Files are still filtered by issue number
+            range to exclude unrelated content.
+            Defaults to False.
 
     Returns:
         bool: Whether the file should be kept or not.
@@ -269,6 +275,32 @@ def folder_extraction_filter(
     neither_found = (
         file_data['year'], file_data['volume_number']
     ) == (None, None)
+
+    if trust_source:
+        # Source already matched to volume, so relax title matching.
+        # Still filter by issue number if available to exclude unrelated files.
+        if file_data['issue_number'] is not None and volume_issues:
+            issue_numbers = [i.calculated_issue_number for i in volume_issues]
+            min_issue = min(issue_numbers)
+            max_issue = max(issue_numbers)
+
+            file_issue = file_data['issue_number']
+            if isinstance(file_issue, tuple):
+                # Range: check if any part overlaps with volume's issue range
+                issue_in_range = not (
+                    file_issue[1] < min_issue or file_issue[0] > max_issue
+                )
+            else:
+                issue_in_range = min_issue <= file_issue <= max_issue
+
+            return (
+                matching_annual
+                and matching_special_version
+                and issue_in_range
+            )
+
+        # No issue number to validate against, trust all files from source
+        return matching_annual and matching_special_version
 
     return (
         matching_title
