@@ -58,6 +58,21 @@ def return_api(
     return {'error': error, 'result': result}, code
 
 
+def _get_configured_metadata_source():
+    from backend.implementations.metadata_sources import (MetadataSourceType,
+                                                          get_metadata_source)
+
+    source_value = Settings().sv.metadata_source or MetadataSourceType.COMICVINE.value
+    try:
+        source_type = MetadataSourceType(source_value)
+    except ValueError:
+        LOGGER.warning(
+            f'Invalid metadata_source setting "{source_value}", falling back to comicvine'
+        )
+        source_type = MetadataSourceType.COMICVINE
+    return get_metadata_source(source_type)
+
+
 def error_handler(method) -> Any:
     """Used as decodator. Catches the errors that can occur in the endpoint and returns the correct api error
     """
@@ -1042,9 +1057,6 @@ def api_releases_new():
     """
     from datetime import datetime, timedelta
 
-    from backend.implementations.metadata_sources import (MetadataSourceType,
-                                                          get_metadata_source)
-    
     start_date = extract_key(request, 'start_date', False)
     end_date = extract_key(request, 'end_date', False)
     limit = extract_key(request, 'limit', False)
@@ -1057,8 +1069,7 @@ def api_releases_new():
     
     limit = int(limit) if limit else 100
     
-    source_type = MetadataSourceType(Settings().sv.metadata_source)
-    source = get_metadata_source(source_type)
+    source = _get_configured_metadata_source()
     releases = run(source.get_new_releases(
         start_date=start_date,
         end_date=end_date,
@@ -1076,14 +1087,10 @@ def api_releases_upcoming():
     Query params:
         days_ahead: Days to look ahead (default 30)
     """
-    from backend.implementations.metadata_sources import (MetadataSourceType,
-                                                          get_metadata_source)
-
     days_ahead = extract_key(request, 'days_ahead', False)
     days_ahead = int(days_ahead) if days_ahead else 30
     
-    source_type = MetadataSourceType(Settings().sv.metadata_source)
-    source = get_metadata_source(source_type)
+    source = _get_configured_metadata_source()
     releases = run(source.get_upcoming_releases(days_ahead=days_ahead))
     return return_api(releases)
 
@@ -1097,14 +1104,10 @@ def api_releases_recent():
     Query params:
         days_back: Days to look back (default 7)
     """
-    from backend.implementations.metadata_sources import (MetadataSourceType,
-                                                          get_metadata_source)
-
     days_back = extract_key(request, 'days_back', False)
     days_back = int(days_back) if days_back else 7
     
-    source_type = MetadataSourceType(Settings().sv.metadata_source)
-    source = get_metadata_source(source_type)
+    source = _get_configured_metadata_source()
     releases = run(source.get_recent_releases(days_back=days_back))
     return return_api(releases)
 
@@ -1173,14 +1176,10 @@ def api_publishers():
     Query params:
         limit: Max results (default 50)
     """
-    from backend.implementations.metadata_sources import (MetadataSourceType,
-                                                          get_metadata_source)
-
     limit = extract_key(request, 'limit', False)
     limit = int(limit) if limit else 50
     
-    source_type = MetadataSourceType(Settings().sv.metadata_source)
-    source = get_metadata_source(source_type)
+    source = _get_configured_metadata_source()
     publishers = run(source.get_publishers(limit=limit))
     return return_api(publishers)
 
@@ -1194,14 +1193,10 @@ def api_publisher_volumes(publisher_id: int):
     Query params:
         limit: Max results (default 100)
     """
-    from backend.implementations.metadata_sources import (MetadataSourceType,
-                                                          get_metadata_source)
-
     limit = extract_key(request, 'limit', False)
     limit = int(limit) if limit else 100
     
-    source_type = MetadataSourceType(Settings().sv.metadata_source)
-    source = get_metadata_source(source_type)
+    source = _get_configured_metadata_source()
     volumes = run(source.search_publisher_volumes(
         publisher_id=publisher_id,
         limit=limit
@@ -1708,34 +1703,9 @@ def api_files(f_id: int):
         delete_issue_file(f_id)
         return return_api({})
     return return_api({})
+        raise InvalidKeyValue('args', args)
 
-
-# =====================
-# Files
-# =====================
-@api.route('/files/<int:f_id>', methods=['GET', 'DELETE'])
-@error_handler
-@auth
-def api_files(f_id: int):
-    if request.method == 'GET':
-        result = FilesDB.fetch(file_id=f_id)[0]
-        return return_api(result)
-
-    elif request.method == 'DELETE':
-        delete_issue_file(f_id)
-        return return_api({})
-    return return_api({})
-@api.route('/files/<int:f_id>', methods=['GET', 'DELETE'])
-@error_handler
-@auth
-def api_files(f_id: int):
-    if request.method == 'GET':
-        result = FilesDB.fetch(file_id=f_id)[0]
-        return return_api(result)
-
-    elif request.method == 'DELETE':
-        delete_issue_file(f_id)
-        return return_api({})
+    run_mass_editor_action(action, volume_ids, **args)
     return return_api({})
 
 

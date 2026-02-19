@@ -6,7 +6,7 @@ Abstract base class and protocol for metadata sources.
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict, List, Optional, Sequence, Type, Union
+from typing import Any, Dict, List, Optional, Sequence, Type, Union
 
 from backend.base.definitions import (FilenameData, IssueMetadata,
                                       NewReleaseMetadata, PublisherMetadata,
@@ -210,7 +210,7 @@ class MetadataSource(ABC):
         for filename in filenames:
             try:
                 search_results = await self.search_volumes(
-                    filename.series,
+                    filename['series'],
                     allow_rate_limit_reached=True
                 )
                 if search_results:
@@ -254,7 +254,7 @@ def get_metadata_source(
     return _source_registry[source_type]()
 
 
-def get_available_sources() -> List[Dict[str, any]]:
+def get_available_sources() -> List[Dict[str, Any]]:
     """Get information about all available metadata sources.
     
     Returns:

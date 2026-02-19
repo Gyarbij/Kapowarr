@@ -8,9 +8,8 @@ Metron (https://metron.cloud/) is a free, community-driven comic database.
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from backend.base.custom_exceptions import VolumeNotMatched
-from backend.base.definitions import (FilenameData, IssueMetadata,
-                                      NewReleaseMetadata, PublisherMetadata,
-                                      VolumeMetadata)
+from backend.base.definitions import (IssueMetadata, NewReleaseMetadata,
+                                      PublisherMetadata, VolumeMetadata)
 from backend.base.file_extraction import extract_issue_number
 from backend.base.helpers import AsyncSession, force_range, normalise_string
 from backend.base.logging import LOGGER
@@ -70,14 +69,17 @@ class MetronSource(MetadataSource):
             return False
         
         try:
-            from requests import get
-            response = get(
-                f"{METRON_API_URL}/series/",
+            from urllib.parse import urlencode
+            from urllib.request import Request, urlopen
+
+            query = urlencode({'page_size': 1})
+            request = Request(
+                f"{METRON_API_URL}/series/?{query}",
                 headers=self._get_headers(),
-                params={'page_size': 1},
-                timeout=10
+                method='GET'
             )
-            return response.status_code == 200
+            with urlopen(request, timeout=10) as response:
+                return response.status == 200
         except Exception as e:
             LOGGER.warning(f"Metron key test failed: {e}")
             return False

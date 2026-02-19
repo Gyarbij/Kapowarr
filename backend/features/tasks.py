@@ -521,7 +521,14 @@ class RefreshReleaseCache(Task):
         WebSocket().emit(TaskStatusEvent(self.message))
 
         cursor = get_db(force_new=True)
-        source_type = MetadataSourceType(Settings().sv.metadata_source)
+        source_value = Settings().sv.metadata_source or MetadataSourceType.COMICVINE.value
+        try:
+            source_type = MetadataSourceType(source_value)
+        except ValueError:
+            LOGGER.warning(
+                f'Invalid metadata_source setting "{source_value}", falling back to comicvine'
+            )
+            source_type = MetadataSourceType.COMICVINE
         source = get_metadata_source(source_type)
         now = current_time()
 
@@ -533,7 +540,6 @@ class RefreshReleaseCache(Task):
             today = datetime.now()
             past = (today - timedelta(days=14)).strftime('%Y-%m-%d')
             future = (today + timedelta(days=30)).strftime('%Y-%m-%d')
-            today_str = today.strftime('%Y-%m-%d')
 
             # Fetch recent and upcoming in one call
             releases = async_run(source.get_new_releases(past, future))
