@@ -1828,11 +1828,12 @@ def refresh_and_scan(
             calculated_issue_number,
             title,
             date,
+            store_date,
             description,
             monitored
         ) VALUES (
             :volume_id, :comicvine_id, :issue_number, :calculated_issue_number,
-            :title, :date, :description, :monitored
+            :title, :date, :store_date, :description, :monitored
         )
         ON CONFLICT(comicvine_id) DO
         UPDATE
@@ -1841,6 +1842,7 @@ def refresh_and_scan(
             calculated_issue_number = :calculated_issue_number,
             title = :title,
             date = :date,
+            store_date = :store_date,
             description = :description;
         """,
         ({
@@ -1850,6 +1852,7 @@ def refresh_and_scan(
             "calculated_issue_number": isd["calculated_issue_number"] or 0.0,
             "title": isd["title"],
             "date": isd["date"],
+            "store_date": isd.get("store_date"),
             "description": isd["description"],
             "monitored": cv_to_id_fetch[isd["volume_id"]][0] in monitor_issues_volume_ids
         }

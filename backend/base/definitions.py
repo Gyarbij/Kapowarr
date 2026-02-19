@@ -608,6 +608,7 @@ class IssueMetadata(TypedDict):
     calculated_issue_number: float
     title: Union[str, None]
     date: Union[str, None]
+    store_date: Union[str, None]
     description: str
 
 

@@ -346,6 +346,7 @@ class ComicVine:
             'calculated_issue_number': calculated_issue_number,
             'title': normalise_string(issue_data['name'] or '') or None,
             'date': issue_data[self.date_type] or None,
+            'store_date': issue_data.get('store_date') or None,
             'description': _clean_description(
                 issue_data['description'],
                 short=True

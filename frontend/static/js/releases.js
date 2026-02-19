@@ -35,45 +35,52 @@ function groupByDate(releases) {
 		}
 		groups[date].push(release);
 	});
-	// Sort dates descending for recent, ascending for upcoming
+	// Sort dates descending for recent, ascending for upcoming/library
 	const sortedDates = Object.keys(groups).sort((a, b) => {
 		if (a === 'Unknown') return 1;
 		if (b === 'Unknown') return -1;
-		const isUpcoming = releaseTypeSelect.value === 'upcoming';
+		const releaseType = releaseTypeSelect.value;
+		const isUpcoming = releaseType === 'upcoming' || releaseType === 'library';
 		return isUpcoming ? a.localeCompare(b) : b.localeCompare(a);
 	});
 	return sortedDates.map(date => ({ date, releases: groups[date] }));
 }
 
 // Create a release card
-function createReleaseCard(release) {
+function createReleaseCard(release, isLibraryView = false) {
 	const card = document.createElement('div');
 	card.className = 'release-card';
 	card.dataset.cvId = release.issue_cv_id;
-	card.dataset.volumeCvId = release.volume_cv_id;
+	card.dataset.volumeCvId = release.volume_cv_id || release.volume_id;
 
-	if (release.in_library) {
+	// Library view items are always in library
+	if (release.in_library || isLibraryView) {
 		card.classList.add('in-library');
 	}
 
 	const coverUrl = release.cover_url || `${url_base}/static/img/placeholder.svg`;
+	const volumeTitle = release.volume_title;
+	const issueNumber = release.issue_number;
+	const releaseDate = release.store_date || release.cover_date;
 
 	card.innerHTML = `
-		<img class="release-cover" src="${coverUrl}" alt="${release.volume_title}" loading="lazy">
+		<img class="release-cover" src="${coverUrl}" alt="${volumeTitle}" loading="lazy">
 		<div class="release-info">
-			<h3 class="release-title" title="${release.volume_title}">${release.volume_title}</h3>
-			<p class="release-issue">#${release.issue_number}</p>
-			<p class="release-date">${formatDate(release.store_date || release.cover_date)}</p>
+			<h3 class="release-title" title="${volumeTitle}">${volumeTitle}</h3>
+			<p class="release-issue">#${issueNumber}</p>
+			<p class="release-date">${formatDate(releaseDate)}</p>
+			${release.publisher ? `<p class="release-publisher">${release.publisher}</p>` : ''}
 			<span class="release-badge in-library">In Library</span>
 		</div>
 	`;
 
-	// Click to view on ComicVine or add to library
+	// Click to view volume or ComicVine
 	card.addEventListener('click', () => {
-		if (release.in_library && release.volume_id) {
+		const volumeId = release.volume_id;
+		if (volumeId) {
 			// Go to volume page
-			window.location.href = `${url_base}/volumes/${release.volume_id}`;
-		} else {
+			window.location.href = `${url_base}/volumes/${volumeId}`;
+		} else if (release.issue_cv_id) {
 			// Open ComicVine page
 			window.open(`https://comicvine.gamespot.com/issue/4000-${release.issue_cv_id}/`, '_blank');
 		}
@@ -86,15 +93,20 @@ function createReleaseCard(release) {
 function renderReleases(releases) {
 	releasesGrid.innerHTML = '';
 
-	// Filter if needed
+	const isLibraryView = releaseTypeSelect.value === 'library';
+
+	// Filter if needed (not applicable to library view)
 	let filteredReleases = releases;
-	if (hideInLibrary) {
+	if (hideInLibrary && !isLibraryView) {
 		filteredReleases = releases.filter(r => !r.in_library);
 	}
 
 	if (filteredReleases.length === 0) {
 		loadingIndicator.classList.add('hidden');
 		emptyState.classList.remove('hidden');
+		emptyState.querySelector('p').textContent = isLibraryView 
+			? 'No upcoming releases found in your library.'
+			: 'No releases found for this period.';
 		return;
 	}
 
@@ -112,7 +124,7 @@ function renderReleases(releases) {
 
 		// Release cards
 		group.releases.forEach(release => {
-			releasesGrid.appendChild(createReleaseCard(release));
+			releasesGrid.appendChild(createReleaseCard(release, isLibraryView));
 		});
 	});
 
@@ -131,6 +143,8 @@ async function fetchReleases() {
 	let endpoint;
 	if (releaseType === 'upcoming') {
 		endpoint = `${url_base}/api/releases/upcoming?days_ahead=${days}`;
+	} else if (releaseType === 'library') {
+		endpoint = `${url_base}/api/releases/library/upcoming?days_ahead=${days}`;
 	} else {
 		endpoint = `${url_base}/api/releases/recent?days_back=${days}`;
 	}
@@ -158,12 +172,19 @@ async function fetchReleases() {
 // Update days label based on release type
 function updateDaysLabel() {
 	const options = daysSelect.querySelectorAll('option');
-	const isUpcoming = releaseTypeSelect.value === 'upcoming';
+	const releaseType = releaseTypeSelect.value;
+	const isUpcoming = releaseType === 'upcoming' || releaseType === 'library';
 	
 	options.forEach(opt => {
 		const days = opt.value;
 		opt.textContent = isUpcoming ? `Next ${days} Days` : `Last ${days} Days`;
 	});
+
+	// Hide "Hide In Library" checkbox for library view
+	const hideInLibraryContainer = hideInLibraryCheckbox.closest('.filter-checkbox');
+	if (hideInLibraryContainer) {
+		hideInLibraryContainer.style.display = releaseType === 'library' ? 'none' : 'flex';
+	}
 }
 
 // Event listeners

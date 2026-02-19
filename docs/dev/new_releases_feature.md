@@ -115,24 +115,27 @@ class MetadataSource(Protocol):
 1. **Phase 1: Foundation** ✅ COMPLETE
    - [x] Add TypedDicts for `PublisherMetadata` and `NewReleaseMetadata` in `definitions.py`
    - [x] Add ComicVine methods: `get_new_releases()`, `get_upcoming_releases()`, `get_recent_releases()`, `get_publishers()`, `search_publisher_volumes()`
-   - [ ] Add `store_date` column to issues table
-   - [ ] Add release cache table
+   - [x] Add `store_date` column to issues table (migration 45)
+   - [x] Add release cache table (migration 45)
 
-2. **Phase 2: New Releases Feed** ✅ API COMPLETE
+2. **Phase 2: New Releases Feed** ✅ COMPLETE
    - [x] API endpoints: `/api/releases/new`, `/api/releases/upcoming`, `/api/releases/recent`
    - [x] API endpoints: `/api/publishers`, `/api/publishers/{id}/volumes`
-   - [ ] Scheduled task for cache refresh
-   - [ ] Basic UI page
+   - [x] Scheduled task for cache refresh (`RefreshReleaseCache`)
+   - [x] Basic UI page (`/releases`)
 
-3. **Phase 3: Upcoming Releases**
-   - Dashboard widget
-   - Calendar view
-   - Notifications (optional)
+3. **Phase 3: Upcoming Releases** ✅ COMPLETE
+   - [x] Add `store_date` to `IssueMetadata` and issue fetching
+   - [x] API endpoint: `/api/releases/library/upcoming` for library issues
+   - [x] "My Library Upcoming" view in releases page
+   - [ ] Dashboard widget (future enhancement)
+   - [ ] Calendar view (future enhancement)
 
-4. **Phase 4: Publisher Browsing**
-   - Publisher cache
-   - Browse UI
-   - Filter integration
+4. **Phase 4: Publisher Browsing** ✅ COMPLETE
+   - [x] Publisher browse UI page (`/publishers`)
+   - [x] Browse volumes by publisher
+   - [x] Publisher filter on volumes page (already existed)
+   - [x] Navigation link added
 
 5. **Phase 5: Multi-Source** (future)
    - Abstract base class

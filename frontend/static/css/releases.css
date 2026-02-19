@@ -85,6 +85,13 @@
 	margin: 0;
 }
 
+.release-publisher {
+	font-size: 0.75rem;
+	color: var(--text-tertiary);
+	margin: 0.25rem 0 0 0;
+	font-style: italic;
+}
+
 .release-badge {
 	position: absolute;
 	top: 0.5rem;

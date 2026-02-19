@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "base.html" import icon_button %}
+{% block title %}Publishers{% endblock %}
+{% block css %}
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/publishers.css') }}">
+{% endblock %}
+{% block js %}
+	<script src="{{ url_for('static', filename='js/publishers.js') }}" defer></script>
+{% endblock %}
+
+{% block pre_build_els %}
+	<div class="publisher-card" data-cv-id="">
+		<h3 class="publisher-name"></h3>
+		<p class="publisher-volumes"></p>
+	</div>
+	<a href="" class="volume-card" data-cv-id="">
+		<img class="volume-cover" src="" alt="" loading="lazy">
+		<div class="volume-info">
+			<h3 class="volume-title"></h3>
+			<p class="volume-year"></p>
+			<span class="volume-badge in-library">In Library</span>
+		</div>
+	</a>
+{% endblock %}
+
+{% block right_side_header %}
+	<form id="search-container" class="icon-dark-color" aria-label="Search bar">
+		<button type="submit" id="start-search" aria-label="Start search">
+			<img src="{{url_base}}/static/img/search.svg" alt="">
+		</button>
+		<input type="text" id="search-input" placeholder="Search publishers..." aria-label="Search input">
+		<button type="button" id="clear-search" aria-label="Clear search">
+			<img src="{{url_base}}/static/img/cancel.svg" alt="">
+		</button>
+	</form>
+{% endblock %}
+
+{% block main %}
+<main>
+	<section class="tool-bar-container" aria-label="Tool bar">
+		<div class="tool-bar">
+			{{ icon_button("refresh-button", "Refresh publishers", "refresh.svg", "Refresh") }}
+			<button id="back-button" class="icon-button hidden" aria-label="Back to publishers">
+				<img src="{{url_base}}/static/img/arrow-left.svg" alt="">
+				<span>Back</span>
+			</button>
+		</div>
+		<div class="tool-bar">
+			<span id="current-view-label"></span>
+		</div>
+	</section>
+	<div class="main-window">
+		<div id="loading" class="loading-indicator">
+			<p>Loading...</p>
+		</div>
+		<div id="empty-state" class="empty-state hidden">
+			<p>No publishers found.</p>
+		</div>
+		
+		<!-- Publishers grid view -->
+		<div id="publishers-grid" class="publishers-container"></div>
+		
+		<!-- Publisher volumes view -->
+		<div id="volumes-grid" class="volumes-container hidden"></div>
+	</div>
+</main>
+{% endblock main %}

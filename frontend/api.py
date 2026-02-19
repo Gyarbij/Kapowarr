@@ -42,6 +42,7 @@ from backend.implementations.naming import (generate_volume_folder_name,
 from backend.implementations.remote_mapping import RemoteMappings
 from backend.implementations.root_folders import RootFolders
 from backend.implementations.volumes import Library, delete_issue_file
+from backend.internals.db import get_db
 from backend.internals.db_models import FilesDB
 from backend.internals.server import Server, StartTypeHandlers
 from backend.internals.settings import Settings, get_about_data
@@ -1091,6 +1092,61 @@ def api_releases_recent():
     
     releases = run(ComicVine().get_recent_releases(days_back=days_back))
     return return_api(releases)
+
+
+@api.route('/releases/library/upcoming', methods=['GET'])
+@error_handler
+@auth
+def api_library_upcoming():
+    """Get upcoming issues from volumes in the library.
+    
+    Query params:
+        days_ahead: Days to look ahead (default 90)
+        monitored_only: Only show monitored volumes (default true)
+    """
+    from datetime import datetime, timedelta
+    
+    days_ahead = extract_key(request, 'days_ahead', False)
+    monitored_only = extract_key(request, 'monitored_only', False)
+    
+    days_ahead = int(days_ahead) if days_ahead else 90
+    monitored_only = monitored_only != 'false' if monitored_only else True
+    
+    today = datetime.now().strftime('%Y-%m-%d')
+    future = (datetime.now() + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
+    
+    cursor = get_db()
+    
+    # Query for upcoming issues with their volume info
+    query = """
+        SELECT 
+            i.id as issue_id,
+            i.comicvine_id as issue_cv_id,
+            i.issue_number,
+            i.calculated_issue_number,
+            i.title as issue_title,
+            i.store_date,
+            i.date as cover_date,
+            v.id as volume_id,
+            v.comicvine_id as volume_cv_id,
+            v.title as volume_title,
+            v.publisher,
+            v.monitored
+        FROM issues i
+        INNER JOIN volumes v ON i.volume_id = v.id
+        WHERE i.store_date >= ? AND i.store_date <= ?
+    """
+    
+    params = [today, future]
+    
+    if monitored_only:
+        query += " AND v.monitored = 1"
+    
+    query += " ORDER BY i.store_date ASC, v.title ASC"
+    
+    results = cursor.execute(query, params).fetchalldict()
+    
+    return return_api(results)
 
 
 @api.route('/publishers', methods=['GET'])
