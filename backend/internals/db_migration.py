@@ -1206,3 +1206,56 @@ def _migrate_add_volume_indexes_and_created_at():
     """)
 
     return
+
+
+@DatabaseMigrationHandler.register_handler(45)
+def _migrate_add_release_cache_and_publisher_tables():
+    """Add tables for caching new releases and publisher data."""
+    cursor = get_db()
+
+    # Create release_cache table for caching new/upcoming releases
+    cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS release_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            issue_cv_id INTEGER NOT NULL UNIQUE,
+            volume_cv_id INTEGER NOT NULL,
+            volume_title TEXT NOT NULL,
+            issue_number TEXT NOT NULL,
+            calculated_issue_number REAL,
+            store_date TEXT,
+            cover_date TEXT,
+            cover_url TEXT,
+            publisher TEXT,
+            fetched_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_release_cache_store_date
+            ON release_cache(store_date);
+        CREATE INDEX IF NOT EXISTS idx_release_cache_fetched_at
+            ON release_cache(fetched_at);
+        CREATE INDEX IF NOT EXISTS idx_release_cache_volume_cv_id
+            ON release_cache(volume_cv_id);
+
+        -- Create publisher_cache table for caching publisher data
+        CREATE TABLE IF NOT EXISTS publisher_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            comicvine_id INTEGER NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            site_url TEXT,
+            volume_count INTEGER DEFAULT 0,
+            fetched_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_publisher_cache_name
+            ON publisher_cache(name);
+        CREATE INDEX IF NOT EXISTS idx_publisher_cache_fetched_at
+            ON publisher_cache(fetched_at);
+    """)
+
+    # Add store_date column to issues table if not exists
+    columns = cursor.execute("PRAGMA table_info(issues);").fetchall()
+    existing_columns = {column[1] for column in columns}
+    if 'store_date' not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE issues ADD COLUMN store_date TEXT;"
+        )
+
+    return

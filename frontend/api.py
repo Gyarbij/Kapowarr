@@ -1024,6 +1024,111 @@ def api_rename_issue(id: int):
     return return_api(only_renamings)
 
 # =====================
+# Releases & Publishers
+# =====================
+
+
+@api.route('/releases/new', methods=['GET'])
+@error_handler
+@auth
+def api_releases_new():
+    """Get new comic releases from ComicVine.
+    
+    Query params:
+        start_date: Start of date range (YYYY-MM-DD)
+        end_date: End of date range (YYYY-MM-DD)
+        limit: Max results (default 100)
+    """
+    from datetime import datetime, timedelta
+    
+    start_date = extract_key(request, 'start_date', False)
+    end_date = extract_key(request, 'end_date', False)
+    limit = extract_key(request, 'limit', False)
+    
+    # Default to last 30 days if not specified
+    if not start_date:
+        start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    if not end_date:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+    
+    limit = int(limit) if limit else 100
+    
+    releases = run(ComicVine().get_new_releases(
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit
+    ))
+    return return_api(releases)
+
+
+@api.route('/releases/upcoming', methods=['GET'])
+@error_handler
+@auth
+def api_releases_upcoming():
+    """Get upcoming comic releases from ComicVine.
+    
+    Query params:
+        days_ahead: Days to look ahead (default 30)
+    """
+    days_ahead = extract_key(request, 'days_ahead', False)
+    days_ahead = int(days_ahead) if days_ahead else 30
+    
+    releases = run(ComicVine().get_upcoming_releases(days_ahead=days_ahead))
+    return return_api(releases)
+
+
+@api.route('/releases/recent', methods=['GET'])
+@error_handler
+@auth
+def api_releases_recent():
+    """Get recently released comics from ComicVine.
+    
+    Query params:
+        days_back: Days to look back (default 7)
+    """
+    days_back = extract_key(request, 'days_back', False)
+    days_back = int(days_back) if days_back else 7
+    
+    releases = run(ComicVine().get_recent_releases(days_back=days_back))
+    return return_api(releases)
+
+
+@api.route('/publishers', methods=['GET'])
+@error_handler
+@auth
+def api_publishers():
+    """Get list of publishers from ComicVine.
+    
+    Query params:
+        limit: Max results (default 50)
+    """
+    limit = extract_key(request, 'limit', False)
+    limit = int(limit) if limit else 50
+    
+    publishers = run(ComicVine().get_publishers(limit=limit))
+    return return_api(publishers)
+
+
+@api.route('/publishers/<int:publisher_id>/volumes', methods=['GET'])
+@error_handler
+@auth
+def api_publisher_volumes(publisher_id: int):
+    """Get volumes from a specific publisher.
+    
+    Query params:
+        limit: Max results (default 100)
+    """
+    limit = extract_key(request, 'limit', False)
+    limit = int(limit) if limit else 100
+    
+    volumes = run(ComicVine().search_publisher_volumes(
+        publisher_cv_id=publisher_id,
+        limit=limit
+    ))
+    return return_api(volumes)
+
+
+# =====================
 # File Conversion
 # =====================
 

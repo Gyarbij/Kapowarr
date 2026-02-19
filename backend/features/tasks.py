@@ -488,6 +488,116 @@ class SearchAll(Task):
         return downloads
 
 
+class RefreshReleaseCache(Task):
+    "Refresh the release cache with new and upcoming comics"
+
+    stop = False
+    message = ''
+    action = 'refresh_release_cache'
+    display_title = 'Refresh Releases'
+    category = ''
+
+    @property
+    def volume_id(self) -> None:
+        return None
+
+    @property
+    def issue_id(self) -> None:
+        return None
+
+    def __init__(self) -> None:
+        return
+
+    def run(self) -> None:
+        from asyncio import run as async_run
+        from datetime import datetime, timedelta
+        from time import time as current_time
+
+        from backend.implementations.comicvine import ComicVine
+
+        self.message = 'Refreshing release cache'
+        WebSocket().emit(TaskStatusEvent(self.message))
+
+        cursor = get_db(force_new=True)
+        cv = ComicVine()
+        now = current_time()
+
+        try:
+            # Get recent releases (last 14 days)
+            self.message = 'Fetching recent releases'
+            WebSocket().emit(TaskStatusEvent(self.message))
+
+            today = datetime.now()
+            past = (today - timedelta(days=14)).strftime('%Y-%m-%d')
+            future = (today + timedelta(days=30)).strftime('%Y-%m-%d')
+            today_str = today.strftime('%Y-%m-%d')
+
+            # Fetch recent and upcoming in one call
+            releases = async_run(cv.get_new_releases(past, future))
+
+            # Clear old cache entries (older than 24 hours)
+            cursor.execute(
+                "DELETE FROM release_cache WHERE fetched_at < ?;",
+                (now - 86400,)
+            )
+
+            # Insert new releases
+            for release in releases:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO release_cache (
+                        issue_cv_id, volume_cv_id, volume_title,
+                        issue_number, calculated_issue_number,
+                        store_date, cover_date, cover_url,
+                        publisher, fetched_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    (
+                        release['issue_cv_id'],
+                        release['volume_cv_id'],
+                        release['volume_title'],
+                        release['issue_number'],
+                        release['calculated_issue_number'],
+                        release['store_date'],
+                        release['cover_date'],
+                        release['cover_url'],
+                        release['publisher'],
+                        round(now)
+                    )
+                )
+
+            LOGGER.info(f'Refreshed release cache with {len(releases)} releases')
+
+            # Also refresh publisher cache
+            self.message = 'Fetching publishers'
+            WebSocket().emit(TaskStatusEvent(self.message))
+
+            publishers = async_run(cv.get_publishers(limit=100))
+
+            for pub in publishers:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO publisher_cache (
+                        comicvine_id, name, site_url, volume_count, fetched_at
+                    ) VALUES (?, ?, ?, ?, ?);
+                    """,
+                    (
+                        pub['comicvine_id'],
+                        pub['name'],
+                        pub['site_url'],
+                        pub['volume_count'],
+                        round(now)
+                    )
+                )
+
+            LOGGER.info(f'Refreshed publisher cache with {len(publishers)} publishers')
+
+        except InvalidComicVineApiKey:
+            LOGGER.warning('Invalid ComicVine API key, skipping release cache refresh')
+
+        return
+
+
 # =====================
 # Task handling
 # =====================

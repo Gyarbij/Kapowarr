@@ -628,6 +628,28 @@ class VolumeMetadata(TypedDict):
     issues: Union[List['IssueMetadata'], None]
 
 
+class PublisherMetadata(TypedDict):
+    comicvine_id: int
+    name: str
+    site_url: str
+    volume_count: int
+
+
+class NewReleaseMetadata(TypedDict):
+    """Metadata for a newly released or upcoming issue"""
+    issue_cv_id: int
+    volume_cv_id: int
+    volume_title: str
+    issue_number: str
+    calculated_issue_number: float
+    store_date: Union[str, None]
+    cover_date: Union[str, None]
+    cover_url: Union[str, None]
+    publisher: Union[str, None]
+    in_library: bool
+    volume_id: Union[int, None]  # Local volume ID if in library
+
+
 class CVFileMapping(TypedDict):
     id: int
     filepath: str

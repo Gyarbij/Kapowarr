@@ -71,6 +71,11 @@ def ui_view_volume(id):
     return render('view_volume.html')
 
 
+@ui.route('/releases', methods=methods)
+def ui_releases():
+    return render('releases.html')
+
+
 @ui.route('/activity/queue', methods=methods)
 def ui_queue():
     return render('queue.html')

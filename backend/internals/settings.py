@@ -151,7 +151,8 @@ task_intervals = {
     # If there are tasks that should be run at the same time,
     # but per se after each other, put them in that order in the dict.
     'update_all': 3600, # every hour
-    'search_all': 86400 # every day
+    'search_all': 86400, # every day
+    'refresh_release_cache': 3600 # every hour
 }
 
 

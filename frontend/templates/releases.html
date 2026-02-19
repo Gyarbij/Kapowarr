@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% from "base.html" import icon_button %}
+{% block title %}Releases{% endblock %}
+{% block css %}
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/releases.css') }}">
+{% endblock %}
+{% block js %}
+	<script src="{{ url_for('static', filename='js/releases.js') }}" defer></script>
+{% endblock %}
+
+{% block pre_build_els %}
+	<div class="release-card" data-cv-id="" data-volume-cv-id="">
+		<img class="release-cover" src="" alt="" loading="lazy">
+		<div class="release-info">
+			<h3 class="release-title"></h3>
+			<p class="release-issue"></p>
+			<p class="release-date"></p>
+			<span class="release-badge in-library">In Library</span>
+		</div>
+	</div>
+{% endblock %}
+
+{% block right_side_header %}
+	<div id="view-controls">
+		<select id="release-type" aria-label="Release type">
+			<option value="recent">Recent Releases</option>
+			<option value="upcoming">Upcoming</option>
+		</select>
+		<select id="days-select" aria-label="Time range">
+			<option value="7">Last 7 Days</option>
+			<option value="14">Last 14 Days</option>
+			<option value="30">Last 30 Days</option>
+		</select>
+	</div>
+{% endblock %}
+
+{% block main %}
+<main>
+	<section class="tool-bar-container" aria-label="Tool bar">
+		<div class="tool-bar">
+			{{ icon_button("refresh-button", "Refresh releases", "refresh.svg", "Refresh") }}
+		</div>
+		<div class="tool-bar">
+			<label class="filter-checkbox">
+				<input type="checkbox" id="hide-in-library">
+				<span>Hide In Library</span>
+			</label>
+		</div>
+	</section>
+	<div class="main-window">
+		<div id="releases-loading" class="loading-indicator">
+			<p>Loading releases...</p>
+		</div>
+		<div id="releases-empty" class="empty-state hidden">
+			<p>No releases found for this period.</p>
+		</div>
+		<div id="releases-grid" class="releases-container"></div>
+	</div>
+</main>
+{% endblock main %}
