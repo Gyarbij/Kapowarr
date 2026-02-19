@@ -127,17 +127,13 @@ function renderVolumes(volumes) {
 }
 
 // Fetch publishers
-async function fetchPublishers() {
+function fetchPublishers(api_key) {
 	loadingIndicator.classList.remove('hidden');
 	emptyState.classList.add('hidden');
 	publishersGrid.innerHTML = '';
 
-	try {
-		const response = await fetch(`${url_base}/api/publishers?limit=100`, {
-			headers: getAuthHeaders()
-		});
-		const data = await response.json();
-
+	fetchAPI('/publishers', api_key, { limit: 100 })
+	.then(data => {
 		if (data.result) {
 			allPublishers = data.result;
 			
@@ -153,16 +149,17 @@ async function fetchPublishers() {
 		} else {
 			throw new Error(data.error || 'Failed to fetch publishers');
 		}
-	} catch (error) {
+	})
+	.catch(error => {
 		console.error('Error fetching publishers:', error);
 		loadingIndicator.classList.add('hidden');
 		emptyState.classList.remove('hidden');
-		emptyState.querySelector('p').textContent = `Error: ${error.message}`;
-	}
+		emptyState.querySelector('p').textContent = `Error: ${error.message || 'Failed to fetch publishers'}`;
+	});
 }
 
 // Show volumes for a specific publisher
-async function showPublisherVolumes(publisher) {
+function showPublisherVolumes(publisher) {
 	currentPublisher = publisher;
 	
 	// Switch views
@@ -175,24 +172,20 @@ async function showPublisherVolumes(publisher) {
 	emptyState.classList.add('hidden');
 	volumesGrid.innerHTML = '';
 
-	try {
-		const response = await fetch(
-			`${url_base}/api/publishers/${publisher.comicvine_id}/volumes?limit=100`,
-			{ headers: getAuthHeaders() }
-		);
-		const data = await response.json();
-
+	fetchAPI(`/publishers/${publisher.comicvine_id}/volumes`, _apiKey, { limit: 100 })
+	.then(data => {
 		if (data.result) {
 			renderVolumes(data.result);
 		} else {
 			throw new Error(data.error || 'Failed to fetch volumes');
 		}
-	} catch (error) {
+	})
+	.catch(error => {
 		console.error('Error fetching publisher volumes:', error);
 		loadingIndicator.classList.add('hidden');
 		emptyState.classList.remove('hidden');
-		emptyState.querySelector('p').textContent = `Error: ${error.message}`;
-	}
+		emptyState.querySelector('p').textContent = `Error: ${error.message || 'Failed to fetch volumes'}`;
+	});
 }
 
 // Go back to publishers view
@@ -246,18 +239,26 @@ function clearSearch() {
 	}
 }
 
-// Event listeners
-refreshButton.addEventListener('click', () => {
-	if (currentPublisher) {
-		showPublisherVolumes(currentPublisher);
-	} else {
-		fetchPublishers();
-	}
+// Store api_key at module level for use in showPublisherVolumes
+let _apiKey = null;
+
+// Initialize with API key
+usingApiKey()
+.then(api_key => {
+	_apiKey = api_key;
+
+	refreshButton.addEventListener('click', () => {
+		if (currentPublisher) {
+			showPublisherVolumes(currentPublisher);
+		} else {
+			fetchPublishers(api_key);
+		}
+	});
+
+	backButton.addEventListener('click', showPublishersView);
+	searchForm.addEventListener('submit', handleSearch);
+	clearSearchBtn.addEventListener('click', clearSearch);
+
+	// Initial load
+	fetchPublishers(api_key);
 });
-
-backButton.addEventListener('click', showPublishersView);
-searchForm.addEventListener('submit', handleSearch);
-clearSearchBtn.addEventListener('click', clearSearch);
-
-// Initial load
-fetchPublishers();

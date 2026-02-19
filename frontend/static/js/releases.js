@@ -132,7 +132,7 @@ function renderReleases(releases) {
 }
 
 // Fetch releases from API
-async function fetchReleases() {
+function fetchReleases(api_key) {
 	loadingIndicator.classList.remove('hidden');
 	emptyState.classList.add('hidden');
 	releasesGrid.innerHTML = '';
@@ -141,32 +141,33 @@ async function fetchReleases() {
 	const days = parseInt(daysSelect.value);
 
 	let endpoint;
+	let params = {};
 	if (releaseType === 'upcoming') {
-		endpoint = `${url_base}/api/releases/upcoming?days_ahead=${days}`;
+		endpoint = '/releases/upcoming';
+		params = { days_ahead: days };
 	} else if (releaseType === 'library') {
-		endpoint = `${url_base}/api/releases/library/upcoming?days_ahead=${days}`;
+		endpoint = '/releases/library/upcoming';
+		params = { days_ahead: days };
 	} else {
-		endpoint = `${url_base}/api/releases/recent?days_back=${days}`;
+		endpoint = '/releases/recent';
+		params = { days_back: days };
 	}
 
-	try {
-		const response = await fetch(endpoint, {
-			headers: getAuthHeaders()
-		});
-		const data = await response.json();
-
+	fetchAPI(endpoint, api_key, params)
+	.then(data => {
 		if (data.result) {
 			allReleases = data.result;
 			renderReleases(allReleases);
 		} else {
 			throw new Error(data.error || 'Failed to fetch releases');
 		}
-	} catch (error) {
+	})
+	.catch(error => {
 		console.error('Error fetching releases:', error);
 		loadingIndicator.classList.add('hidden');
 		emptyState.classList.remove('hidden');
-		emptyState.querySelector('p').textContent = `Error: ${error.message}`;
-	}
+		emptyState.querySelector('p').textContent = `Error: ${error.message || 'Failed to fetch releases'}`;
+	});
 }
 
 // Update days label based on release type
@@ -187,21 +188,24 @@ function updateDaysLabel() {
 	}
 }
 
-// Event listeners
-releaseTypeSelect.addEventListener('change', () => {
+// Initialize with API key
+usingApiKey()
+.then(api_key => {
+	releaseTypeSelect.addEventListener('change', () => {
+		updateDaysLabel();
+		fetchReleases(api_key);
+	});
+
+	daysSelect.addEventListener('change', () => fetchReleases(api_key));
+
+	hideInLibraryCheckbox.addEventListener('change', (e) => {
+		hideInLibrary = e.target.checked;
+		renderReleases(allReleases);
+	});
+
+	refreshButton.addEventListener('click', () => fetchReleases(api_key));
+
+	// Initial load
 	updateDaysLabel();
-	fetchReleases();
+	fetchReleases(api_key);
 });
-
-daysSelect.addEventListener('change', fetchReleases);
-
-hideInLibraryCheckbox.addEventListener('change', (e) => {
-	hideInLibrary = e.target.checked;
-	renderReleases(allReleases);
-});
-
-refreshButton.addEventListener('click', fetchReleases);
-
-// Initial load
-updateDaysLabel();
-fetchReleases();
