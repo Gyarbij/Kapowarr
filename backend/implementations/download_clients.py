@@ -538,8 +538,15 @@ class PixelDrainDownload(BaseDirectDownload):
                 raise CredentialInvalid
 
             response = r.json()
-            if (response["subscription"]["type"] or "free").lower() == "free":
-                # Free account, so fetch standard rate limits
+
+            # Read transfer limits from user response (works for both
+            # free and paid accounts when authenticated with API key).
+            # Fall back to /misc/rate_limits only if fields are missing.
+            transfer_limit_used = response.get("monthly_transfer_used")
+            transfer_limit = response.get("monthly_transfer_cap")
+
+            if transfer_limit_used is None or transfer_limit is None:
+                # Fields not in user response, fall back to rate_limits
                 limits = session.get(
                     Constants.PIXELDRAIN_API_URL + '/misc/rate_limits',
                     headers={
@@ -547,15 +554,14 @@ class PixelDrainDownload(BaseDirectDownload):
                     }
                 ).json()
 
-                transfer_limit_used = limits["transfer_limit_used"]
-                transfer_limit = limits["transfer_limit"]
+                transfer_limit_used = limits.get(
+                    "transfer_limit_used", 0
+                )
+                transfer_limit = limits.get("transfer_limit", 0)
 
-            else:
-                # Paid account, so grab transfer limits from user data
-                transfer_limit_used = response["monthly_transfer_used"]
-                transfer_limit = response["monthly_transfer_cap"]
-                if transfer_limit == -1:
-                    transfer_limit = float("inf")
+            # 0 or -1 means unlimited (no cap enforced)
+            if transfer_limit <= 0:
+                transfer_limit = float("inf")
 
         LOGGER.debug(
             f"Pixeldrain account transfer state: {transfer_limit_used}/{transfer_limit}"
