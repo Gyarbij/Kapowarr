@@ -54,6 +54,30 @@ remove_link_regex = compile(r'<a[^>]*>.*?</a>', IGNORECASE)
 omnibus_regex = compile(r'\bomnibus\b', IGNORECASE)
 os_regex = compile(r'(?<!preceding\s)\bone[\- ]?shot\b(?!\scollections?)', IGNORECASE)
 hc_regex = compile(r'(?<!preceding\s)\bhard[\- ]?cover\b(?!\scollections?)', IGNORECASE)
+tpb_regex = compile(
+    r'\b(?:'
+    r'(?:epic|complete|ultimate|definitive)\s+collection'
+    r'|collected\s+(?:edition|volume)'
+    r'|complete\s+edition'
+    r'|compendium'
+    r'|trade\s+paper\s*back'
+    r'|showcase\s+presents'
+    r')\b',
+    IGNORECASE
+)
+hc_edition_regex = compile(
+    r'\b(?:'
+    r'library\s+edition'
+    r'|deluxe\s+edition'
+    r"|artist'?s?\s+edition"
+    r'|gallery\s+edition'
+    r'|absolute\s+edition'
+    r'|masterworks?'
+    r'|archives'
+    r'|(?:premiere|oversized)\s+(?:hc|hard[\s\-]?cover|classic)'
+    r')\b',
+    IGNORECASE
+)
 vol_regex = compile(r'^v(?:ol(?:ume)?)?\.?\s(?:\d+|(?:(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)[-\s]{0,1})+)(?:\:\s|$)', IGNORECASE)
 # autopep8: on
 
@@ -1586,10 +1610,19 @@ def determine_special_version(volume_id: int) -> SpecialVersion:
     ):
         return SpecialVersion.VOLUME_AS_ISSUE
 
-    if one_issue:
-        if omnibus_regex.search(volume_data.title):
-            return SpecialVersion.OMNIBUS
+    # Title-based format detection (applies regardless of issue count).
+    # Check order: Omnibus > HC editions > TPB collections
+    # (most specific format to broadest catch).
+    if omnibus_regex.search(volume_data.title):
+        return SpecialVersion.OMNIBUS
 
+    if hc_edition_regex.search(volume_data.title):
+        return SpecialVersion.HARD_COVER
+
+    if tpb_regex.search(volume_data.title):
+        return SpecialVersion.TPB
+
+    if one_issue:
         if os_regex.search(volume_data.title):
             return SpecialVersion.ONE_SHOT
 
@@ -1624,8 +1657,14 @@ def determine_special_version(volume_id: int) -> SpecialVersion:
         if os_regex.search(first_sentence):
             return SpecialVersion.ONE_SHOT
 
-        if hc_regex.search(first_sentence):
+        if (
+            hc_regex.search(first_sentence)
+            or hc_edition_regex.search(first_sentence)
+        ):
             return SpecialVersion.HARD_COVER
+
+        if tpb_regex.search(first_sentence):
+            return SpecialVersion.TPB
 
     if one_issue and issues[0].date:
         thirty_plus_days_ago = (
