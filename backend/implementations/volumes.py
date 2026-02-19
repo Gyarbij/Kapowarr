@@ -968,7 +968,8 @@ class Library:
                 SELECT 1 FROM issues
                 WHERE volume_id = volumes.id
                     AND date IS NOT NULL
-                    AND date >= date('now', '-7 days')
+                    AND date != ''
+                    AND date(date) >= date('now', '-7 days')
             )""")
 
         elif filter == LibraryFilter.RECENTLY_RELEASED_30:
@@ -976,7 +977,8 @@ class Library:
                 SELECT 1 FROM issues
                 WHERE volume_id = volumes.id
                     AND date IS NOT NULL
-                    AND date >= date('now', '-30 days')
+                    AND date != ''
+                    AND date(date) >= date('now', '-30 days')
             )""")
 
         elif filter == LibraryFilter.RECENTLY_RELEASED_90:
@@ -984,7 +986,8 @@ class Library:
                 SELECT 1 FROM issues
                 WHERE volume_id = volumes.id
                     AND date IS NOT NULL
-                    AND date >= date('now', '-90 days')
+                    AND date != ''
+                    AND date(date) >= date('now', '-90 days')
             )""")
 
         elif filter == LibraryFilter.HAS_DESCRIPTION:

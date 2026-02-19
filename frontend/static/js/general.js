@@ -347,6 +347,20 @@ mapButtons(volume_id);
 usingApiKey()
 .then(api_key => {
 	setTimeout(() => fillTaskQueue(api_key), 200);
+	// Sync theme from server to ensure consistency across devices
+	fetch(`${url_base}/api/settings?api_key=${api_key}`, { priority: 'low' })
+		.then(response => response.ok ? response.json() : Promise.reject())
+		.then(json => {
+			const serverTheme = json.result.theme;
+			if (serverTheme && serverTheme !== getLocalStorage('theme')['theme']) {
+				setLocalStorage({'theme': serverTheme});
+				if (serverTheme === 'dark')
+					document.querySelector(':root').classList.add('dark-mode');
+				else
+					document.querySelector(':root').classList.remove('dark-mode');
+			}
+		})
+		.catch(() => {});
 });
 
 setupLocalStorage();
