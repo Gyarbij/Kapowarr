@@ -710,7 +710,7 @@ class Settings(metaclass=Singleton):
             InvalidKeyValue: Value of the key is not allowed.
         """
         settings_after_update = SettingsValues(**{
-            **self.get_settings().todict(),
+            **self.get_settings().todict(to_public=False),
             **formatted_data
         })
 
