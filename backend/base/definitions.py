@@ -36,7 +36,7 @@ FileConverter = Callable[[str], List[str]]
 
 # region Constants
 class Constants:
-    MIN_PYTHON_VERSION = (3, 9, 0)
+    MIN_PYTHON_VERSION = (3, 11, 0)
     "The minimum Python version allowed"
 
     SUB_PROCESS_TIMEOUT = 20.0 # seconds

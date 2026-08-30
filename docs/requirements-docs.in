@@ -1,0 +1,6 @@
+wheel
+mkdocs-material
+mkdocs-redirects
+mkdocs-git-revision-date-localized-plugin
+Pygments
+pymdown-extensions

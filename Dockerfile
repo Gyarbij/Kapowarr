@@ -1,5 +1,5 @@
 ARG DISTRO=bookworm
-ARG PYTHON=3.13
+ARG PYTHON=3.14.7
 
 FROM python:${PYTHON}-slim-${DISTRO} AS python
 

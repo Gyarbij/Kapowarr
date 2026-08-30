@@ -4,6 +4,8 @@ const WeeklyEls = {
 	publisher: document.querySelector('#weekly-publisher'),
 	status: document.querySelector('#weekly-status'),
 	refresh: document.querySelector('#weekly-refresh'),
+	expand: document.querySelector('#weekly-expand'),
+	collapse: document.querySelector('#weekly-collapse'),
 	selectMissing: document.querySelector('#select-missing'),
 	queueSelected: document.querySelector('#queue-selected'),
 	count: document.querySelector('#weekly-count'),
@@ -20,6 +22,9 @@ const WeeklyEls = {
 const WeeklyState = {
 	packs: [],
 	selected: new Set(),
+	openWeeks: new Set(),
+	openStateInitialized: false,
+	apiKey: null,
 	page: 1,
 	totalPages: 1,
 	request: 0
@@ -137,12 +142,97 @@ function createIssueRow(item) {
 		`weekly-status status-${item.local_status}`,
 		statusLabels[item.local_status] || item.local_status
 	));
+	row.appendChild(createItemActions(item));
 	return row;
 }
 
-function createWeek(pack, index) {
+function createActionLink(href, label, icon) {
+	const link = weeklyElement('a', 'weekly-action icon-text-color');
+	link.href = href;
+	link.title = label;
+	link.ariaLabel = label;
+	const image = document.createElement('img');
+	image.src = `${url_base}/static/img/${icon}`;
+	image.alt = '';
+	link.appendChild(image);
+	return link;
+}
+
+function createQueueAction(item, action, label) {
+	const button = weeklyElement('button', 'weekly-action icon-text-color');
+	button.type = 'button';
+	button.title = label;
+	button.ariaLabel = label;
+	const image = document.createElement('img');
+	image.src = `${url_base}/static/img/download.svg`;
+	image.alt = '';
+	button.appendChild(image);
+	button.onclick = () => queueWeeklyItems(
+		WeeklyState.apiKey,
+		[item.record_key],
+		action,
+		button
+	);
+	return button;
+}
+
+function addVolumeSearchURL(item) {
+	const params = new URLSearchParams({q: item.series_title || item.display_title});
+	if (item.issue_year)
+		params.set('y', item.issue_year);
+	return `${url_base}/add?${params.toString()}`;
+}
+
+function createItemActions(item) {
+	const actions = weeklyElement('div', 'weekly-actions');
+	if (item.local_volume_id) {
+		actions.appendChild(createActionLink(
+			`${url_base}/volumes/${item.local_volume_id}`,
+			`Open ${item.series_title} in library`,
+			'files.svg'
+		));
+	}
+
+	if (item.local_status === 'missing_monitored') {
+		actions.appendChild(createQueueAction(
+			item,
+			'download',
+			`Download ${item.display_title}`
+		));
+	} else if (item.local_status === 'missing_unmonitored') {
+		actions.appendChild(createQueueAction(
+			item,
+			'monitor_and_download',
+			`Monitor and download ${item.display_title}`
+		));
+	} else if (
+		item.local_status === 'not_in_library'
+		|| (item.local_status === 'ambiguous' && !item.local_volume_id)
+	) {
+		actions.appendChild(createActionLink(
+			addVolumeSearchURL(item),
+			`Find ${item.series_title} in canonical metadata`,
+			'search.svg'
+		));
+	}
+	return actions;
+}
+
+function weeklyPackKey(pack) {
+	return pack.week_date || String(pack.id);
+}
+
+function createWeek(pack) {
 	const details = weeklyElement('details', 'weekly-pack');
-	details.open = index === 0;
+	const packKey = weeklyPackKey(pack);
+	details.dataset.week = packKey;
+	details.open = WeeklyState.openWeeks.has(packKey);
+	details.addEventListener('toggle', () => {
+		if (details.open)
+			WeeklyState.openWeeks.add(packKey);
+		else
+			WeeklyState.openWeeks.delete(packKey);
+	});
 	const summary = weeklyElement('summary', 'weekly-pack-summary');
 	const summaryTitle = weeklyElement('span', 'weekly-pack-title');
 	summaryTitle.appendChild(weeklyElement('strong', '', weeklyDate(pack.week_date)));
@@ -179,9 +269,14 @@ function updateSelectedCount() {
 function renderWeeklyPacks(result) {
 	WeeklyState.packs = result.packs;
 	WeeklyState.totalPages = result.total_pages;
+	if (!WeeklyState.openStateInitialized) {
+		if (result.packs.length)
+			WeeklyState.openWeeks.add(weeklyPackKey(result.packs[0]));
+		WeeklyState.openStateInitialized = true;
+	}
 	WeeklyEls.list.innerHTML = '';
-	result.packs.forEach((pack, index) => {
-		WeeklyEls.list.appendChild(createWeek(pack, index));
+	result.packs.forEach(pack => {
+		WeeklyEls.list.appendChild(createWeek(pack));
 	});
 	WeeklyEls.count.innerText =
 		`${result.total_items} issues across ${result.total_packs} weeks`;
@@ -196,6 +291,47 @@ function renderWeeklyPacks(result) {
 	WeeklyEls.previous.disabled = result.page <= 1;
 	WeeklyEls.next.disabled = result.page >= result.total_pages;
 	updateSelectedCount();
+}
+
+function setAllWeeksOpen(open) {
+	document.querySelectorAll('.weekly-pack').forEach(details => {
+		details.open = open;
+		if (open)
+			WeeklyState.openWeeks.add(details.dataset.week);
+		else
+			WeeklyState.openWeeks.delete(details.dataset.week);
+	});
+}
+
+function restoreWeeklyOption(select, value) {
+	if ([...select.options].some(option => option.value === value))
+		select.value = value;
+}
+
+function applyWeeklyURLParams() {
+	const params = new URLSearchParams(window.location.search);
+	restoreWeeklyOption(WeeklyEls.range, params.get('weeks'));
+	restoreWeeklyOption(WeeklyEls.publisher, params.get('publisher'));
+	restoreWeeklyOption(WeeklyEls.status, params.get('local_status'));
+	WeeklyEls.query.value = params.get('query') || '';
+	const page = parseInt(params.get('page'));
+	WeeklyState.page = Number.isInteger(page) && page > 0 ? page : 1;
+}
+
+function updateWeeklyURL() {
+	const params = new URLSearchParams();
+	if (WeeklyEls.range.value !== '8')
+		params.set('weeks', WeeklyEls.range.value);
+	if (WeeklyEls.publisher.value)
+		params.set('publisher', WeeklyEls.publisher.value);
+	if (WeeklyEls.status.value)
+		params.set('local_status', WeeklyEls.status.value);
+	if (WeeklyEls.query.value.trim())
+		params.set('query', WeeklyEls.query.value.trim());
+	if (WeeklyState.page > 1)
+		params.set('page', WeeklyState.page);
+	const query = params.toString();
+	history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
 }
 
 function fetchWeeklyPacks(apiKey, forceRefresh=false) {
@@ -228,13 +364,17 @@ function fetchWeeklyPacks(apiKey, forceRefresh=false) {
 		});
 }
 
-function queueSelected(apiKey) {
-	if (!WeeklyState.selected.size) return;
-	WeeklyEls.queueSelected.disabled = true;
-	WeeklyEls.message.innerText = 'Validating selected issues...';
-	sendAPI('POST', '/weekly-packs', apiKey, {}, {
-		record_keys: [...WeeklyState.selected],
-		weeks: parseInt(WeeklyEls.range.value)
+function queueWeeklyItems(apiKey, recordKeys, action='download', trigger=null) {
+	if (!recordKeys.length) return Promise.resolve();
+	if (trigger) trigger.disabled = true;
+	else WeeklyEls.queueSelected.disabled = true;
+	WeeklyEls.message.innerText = action === 'monitor_and_download'
+		? 'Monitoring and validating issue...'
+		: 'Validating selected issues...';
+	return sendAPI('POST', '/weekly-packs', apiKey, {}, {
+		record_keys: recordKeys,
+		weeks: parseInt(WeeklyEls.range.value),
+		action
 	})
 		.then(response => response.json())
 		.then(json => {
@@ -250,17 +390,26 @@ function queueSelected(apiKey) {
 			});
 		})
 		.catch(() => {
-			WeeklyEls.message.innerText = 'Selected issues could not be queued.';
+			WeeklyEls.message.innerText = action === 'monitor_and_download'
+				? 'Issue could not be monitored and queued.'
+				: 'Selected issues could not be queued.';
 			updateSelectedCount();
+		})
+		.finally(() => {
+			if (trigger) trigger.disabled = false;
 		});
 }
 
 let queryTimer = null;
 usingApiKey().then(apiKey => {
 	if (!apiKey) return;
+	WeeklyState.apiKey = apiKey;
+	applyWeeklyURLParams();
 	fetchWeeklyPacks(apiKey);
 
 	WeeklyEls.refresh.onclick = () => fetchWeeklyPacks(apiKey, true);
+	WeeklyEls.expand.onclick = () => setAllWeeksOpen(true);
+	WeeklyEls.collapse.onclick = () => setAllWeeksOpen(false);
 	WeeklyEls.selectMissing.onclick = () => {
 		document.querySelectorAll(
 			'.weekly-item[data-status="missing_monitored"] input'
@@ -272,12 +421,16 @@ usingApiKey().then(apiKey => {
 		});
 		updateSelectedCount();
 	};
-	WeeklyEls.queueSelected.onclick = () => queueSelected(apiKey);
+	WeeklyEls.queueSelected.onclick = () => queueWeeklyItems(
+		apiKey,
+		[...WeeklyState.selected]
+	);
 
 	[WeeklyEls.range, WeeklyEls.publisher, WeeklyEls.status].forEach(
 		control => control.onchange = () => {
 			WeeklyState.page = 1;
 			WeeklyState.selected.clear();
+			updateWeeklyURL();
 			fetchWeeklyPacks(apiKey);
 		}
 	);
@@ -286,15 +439,18 @@ usingApiKey().then(apiKey => {
 		queryTimer = setTimeout(() => {
 			WeeklyState.page = 1;
 			WeeklyState.selected.clear();
+			updateWeeklyURL();
 			fetchWeeklyPacks(apiKey);
 		}, 250);
 	};
 	WeeklyEls.previous.onclick = () => {
 		WeeklyState.page -= 1;
+		updateWeeklyURL();
 		fetchWeeklyPacks(apiKey);
 	};
 	WeeklyEls.next.onclick = () => {
 		WeeklyState.page += 1;
+		updateWeeklyURL();
 		fetchWeeklyPacks(apiKey);
 	};
 });

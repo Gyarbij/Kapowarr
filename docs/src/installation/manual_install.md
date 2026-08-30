@@ -5,16 +5,16 @@ On this page, you can find instructions on how to manually install Kapowarr (dir
 === "Linux"
     ### Linux
 
-    1. Install Python 3.9 or higher if you don't have it already.
+    1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if you don't have it already.
 
     ```bash
-    sudo apt-get install python3
+    curl -LsSf https://astral.sh/uv/install.sh | sh
     ```
 
-    2. Install Python PIP if you don't have it already.
+    2. Install Python 3.14 through uv.
 
     ```bash
-    sudo apt-get install python3-pip
+    uv python install 3.14
     ```
 
     3. Download the latest Kapowarr release.
@@ -47,16 +47,17 @@ On this page, you can find instructions on how to manually install Kapowarr (dir
     cd /opt/Kapowarr
     ```
 
-    8. Install the Python requirements.
+    8. Create the virtual environment and sync the Python requirements.
 
     ```bash
-    python3 -m pip install -r requirements.txt
+    uv venv --python 3.14
+    uv pip sync --python .venv/bin/python requirements.txt
     ```
 
     9. You can now start Kapowarr.
 
     ```bash
-    python3 Kapowarr.py
+    .venv/bin/python Kapowarr.py
     ```
 
 === "MacOS"
@@ -64,7 +65,12 @@ On this page, you can find instructions on how to manually install Kapowarr (dir
 
     Make sure you are logged in to your MacOS device as an admin user.
 
-    1. Install Python 3.9 or higher if you don't have it already. You can install Python 3.14 from [this link](https://www.python.org/ftp/python/3.14.3/python-3.14.3-macos11.pkg).
+    1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.14.
+
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    uv python install 3.14
+    ```
 
     2. Download the latest Kapowarr release from [this link](https://github.com/Casvt/Kapowarr/releases/latest/download/Kapowarr-release.zip) and expand the downloaded .zip file.
 
@@ -78,22 +84,28 @@ On this page, you can find instructions on how to manually install Kapowarr (dir
     cd /Applications/Kapowarr
     ```
 
-    6. Install the Python requirements.
+    6. Create the virtual environment and sync the Python requirements.
 
     ```bash
-    python3 -m pip install -r requirements.txt
+    uv venv --python 3.14
+    uv pip sync --python .venv/bin/python requirements.txt
     ```
 
     7. You can now start Kapowarr.
 
     ```bash
-    python3 Kapowarr.py
+    .venv/bin/python Kapowarr.py
     ```
 
 === "Windows"
     ### Windows
 
-    1. Install Python 3.9 or higher if you don't have it already. You can download the Windows Python installer using [this link](https://www.python.org/ftp/python/pymanager/python-manager-26.0.msix). Make sure to check the box to add Python to PATH when prompted.
+    1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.14 from PowerShell.
+
+    ```powershell
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+    uv python install 3.14
+    ```
 
     2. Download the latest Kapowarr release from [this link](https://github.com/Casvt/Kapowarr/releases/latest/download/Kapowarr-release.zip).
 
@@ -105,16 +117,17 @@ On this page, you can find instructions on how to manually install Kapowarr (dir
     cd C:\apps\Kapowarr
     ```
 
-    5. Install the Python requirements.
+    5. Create the virtual environment and sync the Python requirements.
 
     ```powershell
-    python -m pip install -r requirements.txt
+    uv venv --python 3.14
+    uv pip sync --python .venv\Scripts\python.exe requirements.txt
     ```
 
     6. You can now start Kapowarr.
 
     ```powershell
-    python Kapowarr.py
+    .venv\Scripts\python.exe Kapowarr.py
     ```
 
 ??? info "Command line options"
@@ -152,7 +165,7 @@ The installation instructions have shown you how to start Kapowarr from the term
     Restart=on-failure
     RestartSec=5
     Type=simple
-    ExecStart=/usr/bin/python3 /opt/Kapowarr/Kapowarr.py
+    ExecStart=/opt/Kapowarr/.venv/bin/python /opt/Kapowarr/Kapowarr.py
     KillSignal=SIGINT
     TimeoutStopSec=20
     SyslogIdentifier=kapowarr
@@ -203,7 +216,7 @@ The installation instructions have shown you how to start Kapowarr from the term
 
             <key>ProgramArguments</key>
             <array>
-            <string>/usr/bin/python3</string>
+            <string>/Applications/Kapowarr/.venv/bin/python</string>
             <string>/Applications/Kapowarr/Kapowarr.py</string>
             </array>
 
@@ -243,9 +256,9 @@ The installation instructions have shown you how to start Kapowarr from the term
     3. Run CMD as an Administrator and use the command `nssm install kapowarr`.
 
     4. An interface should pop up. Use the following configuration:
-        - Path: Should be the path to your Python executable.
+        - Path: `C:\apps\Kapowarr\.venv\Scripts\python.exe`
 
-        - Startup Directory: Should be the path to your Python installation directory, where the Python executable is in.
+        - Startup Directory: `C:\apps\Kapowarr`
 
         - Arguments: Should be the location of the Kapowarr file. E.g. `C:\apps\Kapowarr\Kapowarr.py`
 
@@ -308,10 +321,11 @@ The installation instructions have shown you how to start Kapowarr from the term
     cd /opt/Kapowarr
     ```
 
-    9. Install the Python requirements. This is needed because it might be the case that requirements have been changed or added.
+    9. Recreate the virtual environment and sync the Python requirements. This is needed because requirements or the supported Python version might have changed.
 
     ```bash
-    python3 -m pip install -r requirements.txt
+    uv venv --python 3.14
+    uv pip sync --python .venv/bin/python requirements.txt
     ```
 
     10. Move the database file back into the application folder in the `db/` subfolder. If that folder doesn't exist already, you can create it and put the file in there, exactly like it was in the old installation. If you have your database file at a custom location outside of the application folder, then you can leave it there.
@@ -319,7 +333,7 @@ The installation instructions have shown you how to start Kapowarr from the term
     11. Start Kapowarr back up. If you were running it in a terminal, then run the following command (with the `--DatabaseFolder` flag if your database is at a custom location).
 
     ```bash
-    python3 Kapowarr.py
+    .venv/bin/python Kapowarr.py
     ```
 
     If you were running it as a systemd service, then run this command:
@@ -363,10 +377,11 @@ The installation instructions have shown you how to start Kapowarr from the term
     cd /Applications/Kapowarr
     ```
 
-    8. Install the Python requirements. This is needed because it might be the case that requirements have been changed or added.
+    8. Recreate the virtual environment and sync the Python requirements. This is needed because requirements or the supported Python version might have changed.
 
     ```bash
-    python3 -m pip install -r requirements.txt
+    uv venv --python 3.14
+    uv pip sync --python .venv/bin/python requirements.txt
     ```
 
     9. Move the database file back into the application folder in the `db/` subfolder. If that folder doesn't exist already, you can create it and put the file in there, exactly like it was in the old installation. If you have your database file at a custom location outside of the application folder, then you can leave it there.
@@ -374,7 +389,7 @@ The installation instructions have shown you how to start Kapowarr from the term
     10. Start Kapowarr back up. If you were running it in a terminal, then run the following command (with the `--DatabaseFolder` flag if your database is at a custom location).
 
     ```bash
-    python3 Kapowarr.py
+    .venv/bin/python Kapowarr.py
     ```
 
     If you were running it as a LaunchAgent service, then run the following command. Replace {user_name} with the name of the user that the application ran as.
@@ -410,10 +425,11 @@ The installation instructions have shown you how to start Kapowarr from the term
     cd C:\apps\Kapowarr
     ```
 
-    7. Install the Python requirements. This is needed because it might be the case that requirements have been changed or added.
+    7. Recreate the virtual environment and sync the Python requirements. This is needed because requirements or the supported Python version might have changed.
 
     ```powershell
-    python -m pip install -r requirements.txt
+    uv venv --python 3.14
+    uv pip sync --python .venv\Scripts\python.exe requirements.txt
     ```
 
     8. Move the database file back into the application folder in the `db\` subfolder. If that folder doesn't exist already, you can create it and put the file in there, exactly like it was in the old installation. If you have your database file at a custom location outside of the application folder, then you can leave it there.
@@ -421,7 +437,7 @@ The installation instructions have shown you how to start Kapowarr from the term
     9. Start Kapowarr back up. If you were running it in a terminal, then run the following command (with the `--DatabaseFolder` flag if your database is at a custom location).
 
     ```powershell
-    python Kapowarr.py
+    .venv\Scripts\python.exe Kapowarr.py
     ```
 
     If you were running it as a nssm service, then run this command:

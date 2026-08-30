@@ -7,7 +7,7 @@ authors = [
 ]
 readme = "README.md"
 license = {file = "LICENSE"}
-requires-python = ">= 3.9"
+requires-python = ">= 3.11"
 
 [tool.mypy]
 warn_unused_configs = true
@@ -27,6 +27,5 @@ remove_redundant_aliases = true
 
 [tool.autopep8]
 aggressive = 3
-experimental = true
 max_line_length = 80
 ignore = ["E124", "E125", "E126", "E128", "E261"]

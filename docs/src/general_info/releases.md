@@ -32,11 +32,22 @@ offline.
 
 ## Weekly Packs
 
-Releases -> Weekly Packs lists the individual issue articles from recent
-GetComics weekly posts, grouped by week and publisher. Filter by publisher,
-local status, or title. 'Select Missing' selects only exact monitored local
-issues without files; 'Queue Selected' revalidates every item on the server
-before using the normal issue download path.
+Weekly Packs is the default Releases view. Use Releases -> Calendar for the
+recent, upcoming, library, and supplemental discovery calendar. Weekly Packs
+lists individual issue articles from recent GetComics posts, grouped by week
+and publisher. Each week can be collapsed independently, and Expand All or
+Collapse All changes every visible week.
+
+Filter by publisher, local status, or title. 'Select Missing' selects only
+exact monitored local issues without files; 'Queue Selected' revalidates every
+item on the server before using the normal issue download path. An exact
+unmonitored issue offers Monitor and Download. Downloaded and metadata-pending
+matches link to the local volume for review.
+
+Items that are not in the library open Add Volume with their parsed title and
+year as search hints. You still choose a result from the configured canonical
+ComicVine or Metron source and confirm the normal root-folder and monitoring
+settings. Weekly Pack text never creates a volume or issue by itself.
 
 Publisher-wide JPG and WebP archives can be several gigabytes. They are shown
 separately as warning-labelled external links and are never queued or extracted

@@ -4,30 +4,100 @@ on:
   push:
     branches:
       - development
+      - main
+  pull_request:
+    branches:
+      - development
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-        
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7.0.1
         name: Set up checkout
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v4
-        name: Set up Python ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v10.0.1
+        name: Set up uv and Python ${{ matrix.python-version }}
         with:
+          version: "0.12.7"
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          enable-cache: true
+          cache-dependency-glob: requirements-dev.txt
 
-      - run: pip install -r requirements.txt
-        name: Install dependencies
+      - run: uv venv --python ${{ matrix.python-version }}
+        name: Create virtual environment
+
+      - run: uv pip sync --python .venv/bin/python requirements-dev.txt
+        name: Sync dependencies
 
       - run: |
-          mkdir db
-          python -m unittest discover -s ./tests -p '*.py'
-        name: Run Tests
+          mkdir -p db
+          uv run --no-sync python -m unittest discover -s ./tests -p '*.py'
+        name: Run tests
+
+      - run: |
+          PYTHONPATH="$PWD" uv run --no-sync python -m benchmarks.benchmark_core \
+            --fast --output performance-${{ matrix.python-version }}.json
+        name: Run performance tests
+
+      - uses: actions/upload-artifact@v7.0.1
+        name: Upload performance results
+        with:
+          name: performance-python-${{ matrix.python-version }}
+          path: performance-${{ matrix.python-version }}.json
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        name: Set up checkout
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        name: Set up uv and Python 3.14
+        with:
+          version: "0.12.7"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: |
+            requirements-dev.txt
+            docs/requirements-docs.txt
+
+      - run: uv venv --python 3.14
+        name: Create virtual environment
+
+      - run: uv pip sync --python .venv/bin/python requirements-dev.txt docs/requirements-docs.txt
+        name: Sync development and docs dependencies
+
+      - run: uv run --no-sync python -m compileall -q backend frontend tests benchmarks Kapowarr.py
+        name: Compile Python sources
+
+      - run: uv run --no-sync python -m mypy --explicit-package-bases .
+        name: Run mypy
+
+      - run: |
+          GIT_PYTHON_GIT_EXECUTABLE=/usr/bin/git \
+          DISABLE_MKDOCS_2_WARNING=true \
+          uv run --no-sync mkdocs build --strict --config-file docs/mkdocs.yml
+        name: Build documentation
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        name: Set up checkout
+
+      - run: docker build --build-arg PYTHON=3.14.7 -t kapowarr:test .
+        name: Build Python 3.14.7 image

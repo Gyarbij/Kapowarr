@@ -27,6 +27,7 @@ INDIVIDUAL_SECTIONS = {
 }
 ARCHIVE_SECTIONS = {'JPG', 'WEBP'}
 WEEKLY_PACKS_URL = 'https://getcomics.org/wp-json/wp/v2/posts'
+WEEKLY_PACK_ACTIONS = {'download', 'monitor_and_download'}
 
 
 def _clean_text(value: str) -> str:
@@ -296,9 +297,7 @@ async def get_enriched_weekly_packs(
     library_rows=None
 ) -> List[dict]:
     from backend.implementations.release_discovery import (
-        enrich_discovery_records,
-        get_discovery_library_rows,
-    )
+        enrich_discovery_records, get_discovery_library_rows)
 
     packs = await get_weekly_packs(weeks, force_refresh)
     rows = (
@@ -315,13 +314,28 @@ async def get_enriched_weekly_packs(
     return packs
 
 
+def _monitor_weekly_item(volume_id: int, issue_id: int) -> None:
+    from backend.implementations.volumes import Issue, Volume
+
+    volume = Volume(volume_id, check_existence=True)
+    issue = Issue(issue_id, check_existence=True)
+    if issue.get_data().volume_id != volume_id:
+        raise ValueError('Weekly Pack issue does not belong to matched volume')
+    volume.update({'monitored': True})
+    issue.update({'monitored': True})
+
+
 async def queue_weekly_pack_items(
     record_keys: List[str],
     weeks: int = 8,
+    action: str = 'download',
     download_handler=None,
     library_rows=None
 ) -> List[dict]:
     from backend.features.download_queue import DownloadHandler
+
+    if action not in WEEKLY_PACK_ACTIONS:
+        raise ValueError('Unknown Weekly Pack action')
 
     packs = await get_enriched_weekly_packs(
         weeks,
@@ -354,8 +368,13 @@ async def queue_weekly_pack_items(
                 'fail_reason': 'Item is not in the cached Weekly Packs'
             })
             continue
+        required_status = (
+            'missing_unmonitored'
+            if action == 'monitor_and_download'
+            else 'missing_monitored'
+        )
         if (
-            item['local_status'] != 'missing_monitored'
+            item['local_status'] != required_status
             or item['local_volume_id'] is None
             or item['local_issue_id'] is None
             or not _is_getcomics_url(item['external_url'], article=True)
@@ -367,11 +386,20 @@ async def queue_weekly_pack_items(
                 'fail_reason': item['match_reason']
             })
             continue
+
+        local_status = item['local_status']
+        if action == 'monitor_and_download':
+            _monitor_weekly_item(
+                item['local_volume_id'],
+                item['local_issue_id']
+            )
+            local_status = 'missing_monitored'
+
         if handler.link_in_queue(item['external_url']):
             results.append({
                 'record_key': record_key,
                 'status': 'already_queued',
-                'local_status': item['local_status'],
+                'local_status': local_status,
                 'fail_reason': None
             })
             continue
@@ -391,7 +419,7 @@ async def queue_weekly_pack_items(
         results.append({
             'record_key': record_key,
             'status': status,
-            'local_status': item['local_status'],
+            'local_status': local_status,
             'queue_entries': len(added),
             'fail_reason': failure.value if failure is not None else None
         })

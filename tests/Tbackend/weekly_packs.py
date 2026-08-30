@@ -168,6 +168,96 @@ class WeeklyPackParserTest(unittest.TestCase):
             lobo['external_url'], 3643, 305, False
         )
 
+    @patch('backend.implementations.weekly_packs.get_weekly_packs')
+    @patch('backend.implementations.weekly_packs._monitor_weekly_item')
+    def test_monitor_and_download_updates_exact_item_before_queue(
+        self,
+        monitor_item,
+        get_weekly_packs
+    ):
+        pack = parse_weekly_pack(self.post)
+        lobo = next(
+            item for item in pack['items']
+            if item['series_title'] == 'Lobo'
+        )
+        pack['items'] = [lobo]
+        get_weekly_packs.return_value = [pack]
+        library_rows = [{
+            'volume_id': 3643,
+            'title': 'Lobo',
+            'alt_title': None,
+            'volume_year': 2026,
+            'publisher': 'DC Comics',
+            'volume_monitored': 0,
+            'issue_id': 305,
+            'calculated_issue_number': 5.0,
+            'issue_date': '2026-07-22',
+            'issue_monitored': 0,
+            'downloaded': 0
+        }]
+        events = []
+        monitor_item.side_effect = lambda *_args: events.append('monitor')
+        handler = MagicMock()
+        handler.link_in_queue.return_value = False
+
+        async def add(*_args):
+            events.append('queue')
+            return [{'id': 10}], None
+
+        handler.add = AsyncMock(side_effect=add)
+
+        result = asyncio.run(queue_weekly_pack_items(
+            [lobo['record_key']],
+            action='monitor_and_download',
+            download_handler=handler,
+            library_rows=library_rows
+        ))
+
+        self.assertEqual(events, ['monitor', 'queue'])
+        self.assertEqual(result[0]['status'], 'queued')
+        self.assertEqual(result[0]['local_status'], 'missing_monitored')
+        monitor_item.assert_called_once_with(3643, 305)
+
+    @patch('backend.implementations.weekly_packs.get_weekly_packs')
+    @patch('backend.implementations.weekly_packs._monitor_weekly_item')
+    def test_download_rejects_exact_unmonitored_item_without_mutation(
+        self,
+        monitor_item,
+        get_weekly_packs
+    ):
+        pack = parse_weekly_pack(self.post)
+        lobo = next(
+            item for item in pack['items']
+            if item['series_title'] == 'Lobo'
+        )
+        pack['items'] = [lobo]
+        get_weekly_packs.return_value = [pack]
+        library_rows = [{
+            'volume_id': 3643,
+            'title': 'Lobo',
+            'alt_title': None,
+            'volume_year': 2026,
+            'publisher': 'DC Comics',
+            'volume_monitored': 1,
+            'issue_id': 305,
+            'calculated_issue_number': 5.0,
+            'issue_date': '2026-07-22',
+            'issue_monitored': 0,
+            'downloaded': 0
+        }]
+        handler = MagicMock()
+
+        result = asyncio.run(queue_weekly_pack_items(
+            [lobo['record_key']],
+            download_handler=handler,
+            library_rows=library_rows
+        ))
+
+        self.assertEqual(result[0]['status'], 'rejected')
+        self.assertEqual(result[0]['local_status'], 'missing_unmonitored')
+        monitor_item.assert_not_called()
+        handler.add.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

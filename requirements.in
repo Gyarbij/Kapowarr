@@ -1,7 +1,7 @@
 aiohttp
 beautifulsoup4
 bencoding
-cryptography>=46.0.5,<47
+cryptography
 flask
 flask-socketio
 pycryptodome

@@ -5,24 +5,32 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     name: Deploy docs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7.0.1
         name: Setup checkout
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v4
-        name: Setup python 3.12
+      - uses: astral-sh/setup-uv@v10.0.1
+        name: Set up uv and Python 3.14
         with:
-          python-version: 3.12
-          cache: 'pip'
+          version: "0.12.7"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: docs/requirements-docs.txt
 
-      - run: pip install -r docs/requirements-docs.txt
-        name: Install dependencies
+      - run: uv venv --python 3.14
+        name: Create virtual environment
 
-      - run: mkdocs gh-deploy --force -f docs/mkdocs.yml
+      - run: uv pip sync --python .venv/bin/python docs/requirements-docs.txt
+        name: Sync dependencies
+
+      - run: uv run --no-sync mkdocs gh-deploy --force -f docs/mkdocs.yml
         name: Build docs

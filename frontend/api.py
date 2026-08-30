@@ -66,6 +66,7 @@ from backend.implementations.remote_mapping import RemoteMappings
 from backend.implementations.root_folders import RootFolders
 from backend.implementations.volumes import Library, delete_issue_file
 from backend.implementations.weekly_packs import (
+    WEEKLY_PACK_ACTIONS,
     get_enriched_weekly_packs,
     queue_weekly_pack_items,
 )
@@ -1304,6 +1305,7 @@ def api_weekly_packs():
             raise InvalidKeyValue('body', data)
         record_keys = data.get('record_keys')
         weeks = data.get('weeks', 8)
+        action = data.get('action', 'download')
         if not (
             isinstance(record_keys, list)
             and 0 < len(record_keys) <= 100
@@ -1312,8 +1314,14 @@ def api_weekly_packs():
             raise InvalidKeyValue('record_keys', record_keys)
         if not isinstance(weeks, int) or not 1 <= weeks <= 50:
             raise InvalidKeyValue('weeks', weeks)
+        if not isinstance(action, str) or action not in WEEKLY_PACK_ACTIONS:
+            raise InvalidKeyValue('action', action)
 
-        outcomes = run(queue_weekly_pack_items(record_keys, weeks))
+        outcomes = run(queue_weekly_pack_items(
+            record_keys,
+            weeks,
+            action=action
+        ))
         counts: Dict[str, int] = {}
         for outcome in outcomes:
             status = outcome['status']
