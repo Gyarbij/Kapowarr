@@ -61,8 +61,8 @@
 {% block main %}
 <main>
 	<input type="checkbox" id="massedit-toggle" class="hidden">
-	<section class="tool-bar-container" aria-label="Tool bar">
-		<div class="tool-bar">
+	<section class="tool-bar-container library-toolbar" aria-label="Library controls">
+		<div class="tool-bar library-actions" role="group" aria-label="Library actions">
 			{{ icon_button(
 				"updateall-button",
 				"Trigger a 'refresh and scan' for all volumes",
@@ -88,52 +88,70 @@
 				"Mass Edit"
 			) }}
 		</div>
-		<div class="tool-bar">
-			<select id="status-filter" aria-label="Filter by library status">
-				<option value="">All Statuses</option>
-				<option value="missing_monitored">Wanted / Missing Monitored</option>
-				<option value="missing">Missing Any</option>
-				<option value="monitored">Monitored</option>
-				<option value="unmonitored">Unmonitored</option>
-				<option value="complete">Complete</option>
-				<option value="partially_downloaded">Partially Downloaded</option>
-				<option value="downloaded">Has Downloads</option>
-				<option value="no_issues">No Issues</option>
-			</select>
-			<select id="date-filter" aria-label="Filter by library date">
-				<option value="">All Dates</option>
-				<option value="recently_added_7">Recently Added (7 days)</option>
-				<option value="recently_added_30">Recently Added (30 days)</option>
-				<option value="recently_added_90">Recently Added (90 days)</option>
-				<option value="recently_added_180">Recently Added (180 days)</option>
-				<option value="recently_added_365">Recently Added (365 days)</option>
-				<option value="recently_released_7">Recently Released (7 days)</option>
-				<option value="recently_released_30">Recently Released (30 days)</option>
-				<option value="recently_released_90">Recently Released (90 days)</option>
-				<option value="recently_released_180">Recently Released (180 days)</option>
-				<option value="recently_released_365">Recently Released (365 days)</option>
-			</select>
-			<select id="publisher-filter" aria-label="Filter by publisher">
-				<option value="">All Publishers</option>
-			</select>
-			<select id="description-filter" aria-label="Filter by description state">
-				<option value="">Any Description</option>
-				<option value="true">Has Description</option>
-				<option value="false">No Description</option>
-			</select>
-			<select id="view-button" aria-label="Change the view">
-				<option value="posters">Posters</option>
-				<option value="table">Table</option>
-			</select>
-			<select id="sort-button" aria-label="Sort the list of volumes">
-				<option value="title">Title</option>
-				<option value="volume_number">Volume Number</option>
-				<option value="year">Year</option>
-				<option value="recently_added">Recently Added</option>
-				<option value="recently_released">Recently Released</option>
-				<option value="publisher">Publisher</option>
-                <option value="wanted">Wanted</option>
-			</select>
+		<div class="library-filter-grid" role="group" aria-label="Library filters and display">
+			<label class="library-filter-field library-filter-status">
+				<span>Status</span>
+				<select id="status-filter" aria-label="Filter by library status">
+					<option value="">All Statuses</option>
+					<option value="missing_monitored">Wanted / Missing Monitored</option>
+					<option value="missing">Missing Any</option>
+					<option value="monitored">Monitored</option>
+					<option value="unmonitored">Unmonitored</option>
+					<option value="complete">Complete</option>
+					<option value="partially_downloaded">Partially Downloaded</option>
+					<option value="downloaded">Has Downloads</option>
+					<option value="no_issues">No Issues</option>
+				</select>
+			</label>
+			<label class="library-filter-field library-filter-date">
+				<span>Date</span>
+				<select id="date-filter" aria-label="Filter by library date">
+					<option value="">All Dates</option>
+					<option value="recently_added_7">Recently Added (7 days)</option>
+					<option value="recently_added_30">Recently Added (30 days)</option>
+					<option value="recently_added_90">Recently Added (90 days)</option>
+					<option value="recently_added_180">Recently Added (180 days)</option>
+					<option value="recently_added_365">Recently Added (365 days)</option>
+					<option value="recently_released_7">Recently Released (7 days)</option>
+					<option value="recently_released_30">Recently Released (30 days)</option>
+					<option value="recently_released_90">Recently Released (90 days)</option>
+					<option value="recently_released_180">Recently Released (180 days)</option>
+					<option value="recently_released_365">Recently Released (365 days)</option>
+				</select>
+			</label>
+			<label class="library-filter-field">
+				<span>Publisher</span>
+				<select id="publisher-filter" aria-label="Filter by publisher">
+					<option value="">All Publishers</option>
+				</select>
+			</label>
+			<label class="library-filter-field">
+				<span>Description</span>
+				<select id="description-filter" aria-label="Filter by description state">
+					<option value="">Any Description</option>
+					<option value="true">Has Description</option>
+					<option value="false">No Description</option>
+				</select>
+			</label>
+			<label class="library-filter-field">
+				<span>View</span>
+				<select id="view-button" aria-label="Change the view">
+					<option value="posters">Posters</option>
+					<option value="table">Table</option>
+				</select>
+			</label>
+			<label class="library-filter-field">
+				<span>Sort</span>
+				<select id="sort-button" aria-label="Sort the list of volumes">
+					<option value="title">Title</option>
+					<option value="volume_number">Volume Number</option>
+					<option value="year">Year</option>
+					<option value="recently_added">Recently Added</option>
+					<option value="recently_released">Recently Released</option>
+					<option value="publisher">Publisher</option>
+					<option value="wanted">Wanted</option>
+				</select>
+			</label>
 		</div>
 	</section>
 	<p id="library-scope" role="status"></p>
