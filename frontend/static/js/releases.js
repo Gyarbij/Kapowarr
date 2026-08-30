@@ -9,6 +9,8 @@ const customRange = document.getElementById('custom-range');
 const startDateInput = document.getElementById('release-start-date');
 const endDateInput = document.getElementById('release-end-date');
 const releaseSortSelect = document.getElementById('release-sort');
+const discoveryProviderSelect = document.getElementById('discovery-provider');
+const discoveryStatusSelect = document.getElementById('discovery-status');
 const hideInLibraryCheckbox = document.getElementById('hide-in-library');
 const refreshButton = document.getElementById('refresh-button');
 const loadMoreButton = document.getElementById('load-more-button');
@@ -19,6 +21,28 @@ let hideInLibrary = false;
 let rootFoldersLoaded = false;
 let visibleReleaseCount = 100;
 let releaseRequestId = 0;
+
+function escapeReleaseText(value) {
+	return String(value ?? '').replace(/[&<>'"]/g, character => ({
+		'&': '&amp;',
+		'<': '&lt;',
+		'>': '&gt;',
+		"'": '&#39;',
+		'"': '&quot;'
+	})[character]);
+}
+
+function safeCoverUrl(value) {
+	if (!value) return `${url_base}/static/img/placeholder.svg`;
+	try {
+		const url = new URL(value, window.location.origin);
+		if (url.protocol === 'http:' || url.protocol === 'https:')
+			return url.href;
+	} catch (_error) {
+		return `${url_base}/static/img/placeholder.svg`;
+	}
+	return `${url_base}/static/img/placeholder.svg`;
+}
 
 const addWindowEls = {
 	form: document.querySelector('#add-form'),
@@ -44,7 +68,7 @@ function formatDate(dateStr) {
 }
 
 function getReleaseDate(release) {
-	return release.store_date || release.cover_date || '';
+	return release.store_date || release.cover_date || release.release_date || '';
 }
 
 function sortReleases(releases) {
@@ -90,32 +114,45 @@ function groupByDate(releases) {
 function createReleaseCard(release, isLibraryView = false) {
 	const card = document.createElement('div');
 	card.className = 'release-card';
-	card.dataset.cvId = release.issue_cv_id;
+	card.dataset.cvId = release.issue_cv_id || release.external_id || '';
 	card.dataset.volumeCvId = release.volume_cv_id || release.volume_id;
-	card.dataset.metadataSource = release.metadata_source || 'comicvine';
+	card.dataset.metadataSource = release.metadata_source
+		|| (release.providers || []).join(',')
+		|| 'comicvine';
+	const isDiscovery = release.local_status !== undefined;
 
 	// Library view items are always in library
 	if (release.in_library || isLibraryView) {
 		card.classList.add('in-library');
 	}
 
-	const coverUrl = release.cover_url || `${url_base}/static/img/placeholder.svg`;
-	const volumeTitle = release.volume_title;
-	const issueNumber = release.issue_number;
-	const releaseDate = release.store_date || release.cover_date;
+	const coverUrl = safeCoverUrl(release.cover_url);
+	const volumeTitle = release.volume_title || release.series_title;
+	const issueNumber = release.issue_number || release.calculated_issue_number;
+	const releaseDate = getReleaseDate(release);
+	const provenance = escapeReleaseText((release.providers || []).join(' · '));
+	const localStatus = escapeReleaseText(
+		(release.local_status || '').replaceAll('_', ' ')
+	);
+	const safeTitle = escapeReleaseText(volumeTitle);
+	const safeIssueNumber = escapeReleaseText(issueNumber);
+	const safePublisher = escapeReleaseText(release.publisher);
 
 	card.innerHTML = `
-		<img class="release-cover" src="${coverUrl}" alt="${volumeTitle}" loading="lazy">
+		<img class="release-cover" src="${coverUrl}" alt="${safeTitle}" loading="lazy">
 		<div class="release-info">
-			<h3 class="release-title" title="${volumeTitle}">${volumeTitle}</h3>
-			<p class="release-issue">#${issueNumber}</p>
+			<h3 class="release-title" title="${safeTitle}">${safeTitle}</h3>
+			<p class="release-issue">#${safeIssueNumber}</p>
 			<p class="release-date">${formatDate(releaseDate)}</p>
-			${release.publisher ? `<p class="release-publisher">${release.publisher}</p>` : ''}
+			${release.publisher ? `<p class="release-publisher">${safePublisher}</p>` : ''}
 			<span class="release-badge in-library">In Library</span>
+			${isDiscovery ? `<p class="release-provenance">${provenance}</p>` : ''}
+			${isDiscovery ? `<span class="release-local-status status-${release.local_status}">${localStatus}</span>` : ''}
+			${isDiscovery && release.available ? '<span class="release-availability">Available</span>' : ''}
 		</div>
 	`;
 
-	if (!release.in_library && !isLibraryView) {
+	if (!release.in_library && !isLibraryView && !isDiscovery) {
 		const actions = document.createElement('div');
 		actions.className = 'release-actions';
 		actions.innerHTML = `
@@ -133,10 +170,14 @@ function createReleaseCard(release, isLibraryView = false) {
 
 	// Click to view volume or ComicVine
 	card.addEventListener('click', () => {
-		const volumeId = release.volume_id;
+		const volumeId = release.volume_id || release.local_volume_id;
 		if (volumeId) {
 			// Go to volume page
 			window.location.href = `${url_base}/volumes/${volumeId}`;
+		} else if (isDiscovery) {
+			const externalUrl = release.download_url
+				|| release.provenance?.find(source => source.external_url)?.external_url;
+			if (externalUrl) window.open(externalUrl, '_blank');
 		} else if (release.issue_cv_id) {
 			const externalUrl = release.metadata_source === 'metron'
 				? `https://metron.cloud/issue/${release.issue_cv_id}/`
@@ -393,7 +434,24 @@ function fetchReleases(api_key, forceRefresh=false) {
 
 	let endpoint;
 	let params = { limit: 5000 };
-	if (selectedRange === 'custom') {
+	if (releaseType === 'discovery') {
+		endpoint = '/releases/discovery';
+		if (selectedRange === 'custom') {
+			params.start_date = startDateInput.value;
+			params.end_date = endDateInput.value;
+		} else {
+			const end = new Date();
+			const start = new Date();
+			start.setDate(start.getDate() - parseInt(selectedRange));
+			params.start_date = formatInputDate(start);
+			params.end_date = formatInputDate(end);
+		}
+		params.per_page = 500;
+		if (discoveryProviderSelect.value)
+			params.provider = discoveryProviderSelect.value;
+		if (discoveryStatusSelect.value)
+			params.local_status = discoveryStatusSelect.value;
+	} else if (selectedRange === 'custom') {
 		ensureCustomRange();
 		endpoint = releaseType === 'library'
 			? '/releases/library/upcoming'
@@ -420,7 +478,13 @@ function fetchReleases(api_key, forceRefresh=false) {
 	.then(data => {
 		if (requestId !== releaseRequestId) return;
 		if (data.result) {
-			allReleases = data.result;
+			allReleases = releaseType === 'discovery'
+				? data.result.items.map(release => ({
+					...release,
+					in_library: release.local_status !== 'not_in_library',
+					volume_id: release.local_volume_id
+				}))
+				: data.result;
 			visibleReleaseCount = 100;
 			renderReleases(allReleases);
 		} else {
@@ -445,6 +509,7 @@ function updateDaysLabel() {
 	const options = daysSelect.querySelectorAll('option');
 	const releaseType = releaseTypeSelect.value;
 	const isUpcoming = releaseType === 'upcoming' || releaseType === 'library';
+	const isDiscovery = releaseType === 'discovery';
 	
 	options.forEach(opt => {
 		if (opt.value === 'custom') {
@@ -461,6 +526,8 @@ function updateDaysLabel() {
 	if (hideInLibraryContainer) {
 		hideInLibraryContainer.style.display = releaseType === 'library' ? 'none' : 'flex';
 	}
+	discoveryProviderSelect.classList.toggle('hidden', !isDiscovery);
+	discoveryStatusSelect.classList.toggle('hidden', !isDiscovery);
 }
 
 // Initialize with API key
@@ -475,7 +542,9 @@ usingApiKey()
 		'release_sort',
 		'release_custom_start',
 		'release_custom_end',
-		'release_hide_in_library'
+		'release_hide_in_library',
+		'release_provider',
+		'release_local_status'
 	);
 	releaseTypeSelect.value = preferences.release_type || 'recent';
 	daysSelect.value = preferences.release_range || '30';
@@ -484,9 +553,14 @@ usingApiKey()
 	endDateInput.value = preferences.release_custom_end || '';
 	hideInLibrary = Boolean(preferences.release_hide_in_library);
 	hideInLibraryCheckbox.checked = hideInLibrary;
+	discoveryProviderSelect.value = preferences.release_provider || '';
+	discoveryStatusSelect.value = preferences.release_local_status || '';
 
 	releaseTypeSelect.addEventListener('change', () => {
-		const isUpcoming = releaseTypeSelect.value !== 'recent';
+		const isUpcoming = (
+			releaseTypeSelect.value === 'upcoming'
+			|| releaseTypeSelect.value === 'library'
+		);
 		if (releaseSortSelect.value.startsWith('date-'))
 			releaseSortSelect.value = isUpcoming ? 'date-asc' : 'date-desc';
 		setLocalStorage({
@@ -526,6 +600,15 @@ usingApiKey()
 		setLocalStorage({release_hide_in_library: hideInLibrary});
 		visibleReleaseCount = 100;
 		renderReleases(allReleases);
+	});
+
+	discoveryProviderSelect.addEventListener('change', () => {
+		setLocalStorage({release_provider: discoveryProviderSelect.value});
+		fetchReleases(api_key);
+	});
+	discoveryStatusSelect.addEventListener('change', () => {
+		setLocalStorage({release_local_status: discoveryStatusSelect.value});
+		fetchReleases(api_key);
 	});
 
 	refreshButton.addEventListener('click', () => fetchReleases(api_key, true));

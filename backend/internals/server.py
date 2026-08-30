@@ -10,8 +10,7 @@ from __future__ import annotations
 from multiprocessing import SimpleQueue
 from os import urandom
 from threading import Thread, Timer
-from typing import (TYPE_CHECKING, Any, Callable, Dict,
-                    Iterable, List, Mapping, Union)
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Mapping, Union
 
 from flask import Flask, render_template, request
 from flask.json.provider import DefaultJSONProvider
@@ -21,14 +20,22 @@ from waitress.server import create_server
 from waitress.task import ThreadedTaskDispatcher as TTD
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
-from backend.base.definitions import (Constants, StartType, StartTypeHandler,
-                                      WebSocketEvent, WebSocketEventType)
+from backend.base.definitions import (
+    Constants,
+    StartType,
+    StartTypeHandler,
+    WebSocketEvent,
+    WebSocketEventType,
+)
 from backend.base.files import folder_path
 from backend.base.helpers import Singleton
 from backend.base.logging import LOGGER, setup_logging
-from backend.internals.db import (DBConnectionManager, close_db,
-                                  set_db_location,
-                                  setup_db_adapters_and_converters)
+from backend.internals.db import (
+    DBConnectionManager,
+    close_db,
+    set_db_location,
+    setup_db_adapters_and_converters,
+)
 from backend.internals.settings import Settings
 
 if TYPE_CHECKING:
@@ -467,11 +474,15 @@ class TaskAddedEvent(WebSocketEvent):
         return WebSocketEventType.TASK_ADDED
 
     def get_body(self) -> Dict[str, Any]:
-        return {
+        result = {
             "action": self.task.action,
             "volume_id": self.task.volume_id,
             "issue_id": self.task.issue_id
         }
+        summary = getattr(self.task, 'summary', None)
+        if summary is not None:
+            result['summary'] = summary
+        return result
 
 
 class TaskStatusEvent(WebSocketEvent):
@@ -528,7 +539,8 @@ class MassEditorStatusEvent(WebSocketEvent):
         self,
         identifier: str,
         current_item: int,
-        total_items: int
+        total_items: int,
+        summary: Union[Dict[str, Any], None] = None
     ) -> None:
         """Create the event.
 
@@ -540,17 +552,21 @@ class MassEditorStatusEvent(WebSocketEvent):
         self.identifier = identifier
         self.current_item = current_item
         self.total_items = total_items
+        self.summary = summary
         return
 
     def get_type(self) -> WebSocketEventType:
         return WebSocketEventType.MASS_EDITOR_STATUS
 
     def get_body(self) -> Dict[str, Any]:
-        return {
+        result = {
             "identifier": self.identifier,
             "current_item": self.current_item,
             "total_items": self.total_items
         }
+        if self.summary is not None:
+            result['summary'] = self.summary
+        return result
 
 
 class DownloadedStatusEvent(WebSocketEvent):

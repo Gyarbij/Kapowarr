@@ -90,11 +90,31 @@ This section covers searching for, and downloading, files for issues.
 
 The button 'Search Monitored' will make Kapowarr try to download media files for issues that aren't downloaded yet. This button only does something if the volume is monitored and at least one of its monitored issues doesn't have a file yet. It will try to find a download for as many issues as possible, but it isn't guaranteed that it will always find a matching and working download.
 
-On the library page, the button 'Search All' will trigger a 'Search Monitored' for all monitored volumes. A search is done automatically every 24 hours by default, but you can also trigger it manually.
+On the library page, 'Search Missing' searches the monitored issues without
+files in the current filtered view. It uses the canonical metadata already
+stored by Kapowarr and does not refresh ComicVine or Metron first. Use
+'Refresh & Search Missing' when newly announced issues may not be in the local
+metadata yet. A search is also done automatically every 24 hours by default.
+
+The Status and Date filters are independent. For example, combine 'Wanted /
+Missing Monitored' with 'Recently Released (180 days)' and a publisher to catch
+up a specific part of the library. The summary above the library reports the
+visible volumes and monitored issues without files. When a search finishes, it
+reports matched, queued, already queued, and rejected counts, including the
+rejection reasons.
 
 ### Manual Search
 
-The button 'Manual Search' will show you a list of search results for the volume/issue. From these results, you can choose yourself which one should be downloaded (instead of Kapowarr automatically choosing with Search Monitored). It is possible that the search result does not contain any matching and working downloads. In that case, the download button will turn red and the page will be added to the blocklist. Hover with your mouse over the red button to see the reason why it failed. If Kapowarr is convinced that the download links [don't match](./matching.md#search-results-for-downloads) to the volume but you click the download button anyway, it'll probably fail (because nothing matches). If you still want Kapowarr to download it, then click the icon next to the download icon, which will _force_ download it.
+The button 'Manual Search' will show you a list of search results for the
+volume/issue. From these results, you can choose yourself which one should be
+downloaded (instead of Kapowarr automatically choosing with Search Monitored).
+Each result shows whether it matches and, when it does not, the rejection reason
+as visible text. A failed download attempt may add a broken page or mirror to
+the blocklist. If Kapowarr is convinced that the download links [don't
+match](./matching.md#search-results-for-downloads) to the volume but you click
+the download button anyway, it will probably fail. If you still want Kapowarr
+to download it, click the icon next to the download icon to _force_ download
+it.
 
 ### Download Queue and Post Processing
 

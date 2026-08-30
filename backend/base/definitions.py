@@ -427,6 +427,30 @@ class LibraryFilter(BaseEnum):
     HAS_DESCRIPTION = "has_description"
 
 
+class LibraryStatusFilter(BaseEnum):
+    MISSING_MONITORED = "missing_monitored"
+    MISSING = "missing"
+    MONITORED = "monitored"
+    UNMONITORED = "unmonitored"
+    COMPLETE = "complete"
+    PARTIALLY_DOWNLOADED = "partially_downloaded"
+    DOWNLOADED = "downloaded"
+    NO_ISSUES = "no_issues"
+
+
+class LibraryDateFilter(BaseEnum):
+    RECENTLY_ADDED_7 = "recently_added_7"
+    RECENTLY_ADDED_30 = "recently_added_30"
+    RECENTLY_ADDED_90 = "recently_added_90"
+    RECENTLY_ADDED_180 = "recently_added_180"
+    RECENTLY_ADDED_365 = "recently_added_365"
+    RECENTLY_RELEASED_7 = "recently_released_7"
+    RECENTLY_RELEASED_30 = "recently_released_30"
+    RECENTLY_RELEASED_90 = "recently_released_90"
+    RECENTLY_RELEASED_180 = "recently_released_180"
+    RECENTLY_RELEASED_365 = "recently_released_365"
+
+
 class MonitorScheme(BaseEnum):
     ALL = "all"
     MISSING = "missing"
@@ -620,9 +644,21 @@ class SearchResultData(FilenameData):
     source: str
 
 
+class SearchResultMatchReason(BaseEnum):
+    BLOCKLISTED = "blocklisted"
+    ANNUAL_CONFLICT = "annual_conflict"
+    TITLE_MISMATCH = "title_mismatch"
+    VOLUME_NUMBER_MISMATCH = "volume_number_mismatch"
+    SPECIAL_VERSION_CONFLICT = "special_version_conflict"
+    YEAR_MISMATCH = "year_mismatch"
+    ISSUE_NUMBER_MISMATCH = "issue_number_mismatch"
+
+
 class SearchResultMatchData(TypedDict):
     match: bool
     match_issue: Union[str, None]
+    match_reason_code: Union[str, None]
+    matched_issue_ids: List[int]
 
 
 class MatchedSearchResultData(
@@ -631,6 +667,19 @@ class MatchedSearchResultData(
     total=False
 ):
     _issue_number: Union[float, Tuple[float, float]]
+
+
+class SearchOutcomeData(TypedDict):
+    volumes_scanned: int
+    volumes_skipped: int
+    open_issues: int
+    candidates_found: int
+    matched_candidates: int
+    selected_links: int
+    queued_links: int
+    already_queued_links: int
+    rejections: Dict[str, int]
+    enqueue_failures: Dict[str, int]
 
 
 class IssueMetadata(TypedDict):
@@ -933,7 +982,7 @@ class MassEditorAction(ABC):
         return
 
     @abstractmethod
-    def run(self, **kwargs: Any) -> None:
+    def run(self, **kwargs: Any) -> Any:
         "Run the mass editor action"
         ...
 

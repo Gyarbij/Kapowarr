@@ -337,6 +337,7 @@ function showManualSearch(api_key, issue_id=null) {
 			tbody.appendChild(entry);
 
 			const match = entry.querySelector('.match-column');
+			const match_reason = entry.querySelector('.match-reason-column');
 			if (result.match)
 				setImage(
 					match,
@@ -349,6 +350,8 @@ function showManualSearch(api_key, issue_id=null) {
 					images.cancel,
 					result.match_issue
 				);
+			match_reason.innerText = result.match_issue || 'Matched';
+			match_reason.dataset.reason = result.match_reason_code || 'matched';
 
 			const title = entry.querySelector('a');
 			title.href = result.link;
@@ -375,6 +378,7 @@ function showManualSearch(api_key, issue_id=null) {
                         volume_id, issue_id,
 						blocklist_button,
 						match,
+						match_reason,
 						api_key
 					);
 			else
@@ -414,7 +418,7 @@ function addManualSearch(link, force, button, api_key, issue_id=null) {
 function blockManualSearch(
     web_link, web_title,
     volume_id, issue_id,
-    button, match,
+	button, match, match_reason,
     api_key
 ) {
 	sendAPI('POST', '/blocklist', api_key, {}, {
@@ -432,6 +436,8 @@ function blockManualSearch(
             'cancel.svg',
             'Link is blocklisted'
         );
+		match_reason.innerText = 'Link is blocklisted';
+		match_reason.dataset.reason = 'blocklisted';
 	});
 };
 

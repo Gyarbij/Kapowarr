@@ -18,6 +18,38 @@
 	cursor: pointer;
 }
 
+.release-provenance {
+	margin-top: .35rem;
+	font-size: .7rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	color: var(--dimmed-text-color);
+}
+
+.release-local-status,
+.release-availability {
+	display: inline-block;
+	margin-top: .35rem;
+	padding: .2rem .35rem;
+	border-left: 3px solid var(--darker-color);
+	background: var(--background-tertiary);
+	font-size: .68rem;
+	text-transform: capitalize;
+}
+
+.release-local-status.status-missing_monitored {
+	border-color: var(--error-color);
+}
+
+.release-local-status.status-downloaded {
+	border-color: var(--success-color);
+}
+
+.release-local-status.status-metadata_pending,
+.release-availability {
+	border-color: var(--accent-color);
+}
+
 #custom-range {
 	display: flex;
 	align-items: center;
@@ -85,12 +117,16 @@
 }
 
 .release-title {
+	min-height: 2.3rem;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
 	font-size: 0.95rem;
 	font-weight: 600;
+	line-height: 1.2;
 	margin: 0 0 0.25rem 0;
-	white-space: nowrap;
 	overflow: hidden;
-	text-overflow: ellipsis;
+	overflow-wrap: anywhere;
 }
 
 .release-issue {
@@ -265,7 +301,7 @@
 }
 
 /* Responsive adjustments */
-@media (max-width: 768px) {
+@media (max-width: 1000px) {
 	header {
 		height: auto;
 		flex-wrap: wrap;

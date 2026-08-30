@@ -99,10 +99,16 @@ When searching for downloads, Kapowarr determines whether the result is a match 
 1. Not be blocklisted.
 2. Series title has to match.
 3. If the volume number is given, it should match.
-4. If the year is given, it should match.
+4. If the year is given for a numbered issue, it should match that issue's
+	publication year, with one year of tolerance for cover/store-date drift. If
+	no issue date is known, the volume's publication span is used.
 5. If it is for a hard cover or one shot, it has to follow the first rule they have for files.
 6. If it is for a TPB, it has to follow the first two rules it has for files.
 7. If not a special version, the issue number should match to an issue in the volume.
+
+Supplemental release calendars and GetComics Weekly Packs never create issue
+rows. An issue can only be selected automatically after its exact number exists
+in the canonical ComicVine or Metron metadata for one local volume.
 
 ## GetComics Groups
 

@@ -39,6 +39,7 @@ async function fetchAPI(endpoint, api_key, params={}, json_return=true) {
 		if (response.status === 401) {
 			setLocalStorage({api_key: null})
 			window.location.href = `${url_base}/login?redirect=${window.location.pathname}`;
+			return Promise.reject(response);
 		} else {
 			return Promise.reject(response);
 		};
@@ -64,6 +65,7 @@ async function sendAPI(method, endpoint, api_key, params={}, body={}) {
 		if (response.status === 401) {
 			setLocalStorage({api_key: null})
 			window.location.href = `${url_base}/login?redirect=${window.location.pathname}`;
+			return Promise.reject(response);
 		} else {
 			return Promise.reject(response);
 		};
@@ -92,6 +94,11 @@ function mapButtons(id) {
 		task_to_button['search_all'] = {
 			'button': document.querySelector('#searchall-button'),
 			'icon': `${url_base}/static/img/search.svg`,
+			'loading_icon': `${url_base}/static/img/loading.svg`
+		};
+		task_to_button['refresh_search_all'] = {
+			'button': document.querySelector('#refreshsearch-button'),
+			'icon': `${url_base}/static/img/refresh.svg`,
 			'loading_icon': `${url_base}/static/img/loading.svg`
 		};
 		task_to_button['update_all'] = {
@@ -221,7 +228,7 @@ function handleTaskAdded(data) {
 };
 
 function handleTaskRemoved(data) {
-	setTaskMessage('');
+	setTaskMessage(data.summary || '');
 
 	const task_string = buildTaskString(data);
 	if (task_string in task_to_button)
@@ -289,12 +296,16 @@ const default_values = {
 	'lib_sorting': 'title',
 	'lib_view': 'posters',
 	'lib_filter': '',
+	'lib_status_filter': '',
+	'lib_date_filter': '',
 	'release_type': 'recent',
 	'release_range': '30',
 	'release_sort': 'date-desc',
 	'release_custom_start': '',
 	'release_custom_end': '',
 	'release_hide_in_library': false,
+	'release_provider': '',
+	'release_local_status': '',
 	'publisher_sort': 'major',
 	'publisher_search': '',
 	'theme': 'system',

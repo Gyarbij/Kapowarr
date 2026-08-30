@@ -9,33 +9,51 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Tuple, Type, Union
 
 from typing_extensions import assert_never
 
-from backend.base.custom_exceptions import (ClientNotWorking,
-                                            DownloadLimitReached,
-                                            DownloadNotFound,
-                                            DownloadUnmovable,
-                                            EnqueuingDownloadFailure,
-                                            InvalidKeyValue, IssueNotFound,
-                                            LinkBroken)
-from backend.base.definitions import (BlocklistReason, Constants, Download,
-                                      DownloadSource, DownloadState,
-                                      EnqueuingDownloadFailureReason,
-                                      ExternalDownload, SeedingHandling)
+from backend.base.custom_exceptions import (
+    ClientNotWorking,
+    DownloadLimitReached,
+    DownloadNotFound,
+    DownloadUnmovable,
+    EnqueuingDownloadFailure,
+    InvalidKeyValue,
+    IssueNotFound,
+    LinkBroken,
+)
+from backend.base.definitions import (
+    BlocklistReason,
+    Constants,
+    Download,
+    DownloadSource,
+    DownloadState,
+    EnqueuingDownloadFailureReason,
+    ExternalDownload,
+    SeedingHandling,
+)
 from backend.base.files import create_folder, delete_file_folder
 from backend.base.helpers import CommaList, Singleton, get_subclasses
 from backend.base.logging import LOGGER
-from backend.features.post_processing import (PostProcessor,
-                                              PostProcessorTorrentsComplete,
-                                              PostProcessorTorrentsCopy)
+from backend.features.post_processing import (
+    PostProcessor,
+    PostProcessorTorrentsComplete,
+    PostProcessorTorrentsCopy,
+)
 from backend.implementations.blocklist import add_to_blocklist
-from backend.implementations.download_clients import (BaseDirectDownload,
-                                                      MegaDownload,
-                                                      TorrentDownload)
+from backend.implementations.download_clients import (
+    BaseDirectDownload,
+    MegaDownload,
+    TorrentDownload,
+)
 from backend.implementations.external_clients import ExternalClients
 from backend.implementations.getcomics import GetComicsPage
 from backend.implementations.volumes import Issue
 from backend.internals.db import get_db, iter_commit
-from backend.internals.server import (AddedToQueueEvent, QueueStatusEvent,
-                                      RemovedFromQueueEvent, Server, WebSocket)
+from backend.internals.server import (
+    AddedToQueueEvent,
+    QueueStatusEvent,
+    RemovedFromQueueEvent,
+    Server,
+    WebSocket,
+)
 from backend.internals.settings import Settings
 
 if TYPE_CHECKING:
@@ -484,15 +502,17 @@ class DownloadHandler(metaclass=Singleton):
     def add_multiple(
         self,
         add_args: Iterable[Tuple[str, int, Union[int, None], bool]]
-    ) -> None:
+    ) -> List[Tuple[
+        List[dict],
+        Union[EnqueuingDownloadFailureReason, None]
+    ]]:
         async def add_wrapper():
-            await gather(
+            return await gather(
                 *(self.add(*entry)
                 for entry in add_args)
             )
 
-        run(add_wrapper())
-        return
+        return list(run(add_wrapper()))
 
     def __load_downloads(self) -> None:
         """

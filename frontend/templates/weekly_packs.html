@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "base.html" import icon_button %}
+{% block title %}Weekly Packs{% endblock %}
+{% block css %}
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/weekly_packs.css') }}">
+{% endblock %}
+{% block js %}
+	<script src="{{ url_for('static', filename='js/weekly_packs.js') }}" defer></script>
+{% endblock %}
+
+{% block right_side_header %}
+	<div id="weekly-search">
+		<img src="{{url_base}}/static/img/search.svg" alt="">
+		<input id="weekly-query" type="search" placeholder="Search issues" aria-label="Search weekly issues">
+	</div>
+{% endblock %}
+
+{% block main %}
+<main>
+	<section class="tool-bar-container" aria-label="Weekly Pack actions">
+		<div class="tool-bar">
+			{{ icon_button("weekly-refresh", "Refresh Weekly Packs", "refresh.svg", "Refresh") }}
+			{{ icon_button("select-missing", "Select exact monitored issues without files", "check.svg", "Select Missing") }}
+			{{ icon_button("queue-selected", "Queue selected issue articles", "download.svg", "Queue Selected") }}
+		</div>
+		<div class="tool-bar weekly-filters">
+			<select id="weekly-range" aria-label="Week range">
+				<option value="4">4 Weeks</option>
+				<option value="8" selected>8 Weeks</option>
+				<option value="12">12 Weeks</option>
+				<option value="26">26 Weeks</option>
+				<option value="50">50 Weeks</option>
+			</select>
+			<select id="weekly-publisher" aria-label="Publisher">
+				<option value="">All Publishers</option>
+				<option value="dc">DC</option>
+				<option value="marvel">Marvel</option>
+				<option value="image">Image</option>
+				<option value="indie">Indie</option>
+			</select>
+			<select id="weekly-status" aria-label="Local status">
+				<option value="">All Local Statuses</option>
+				<option value="missing_monitored">Missing Monitored</option>
+				<option value="missing_unmonitored">Missing Unmonitored</option>
+				<option value="downloaded">Downloaded</option>
+				<option value="metadata_pending">Metadata Pending</option>
+				<option value="not_in_library">Not In Library</option>
+				<option value="ambiguous">Needs Review</option>
+			</select>
+		</div>
+	</section>
+
+	<section id="weekly-summary" aria-live="polite">
+		<span id="weekly-count"></span>
+		<span id="weekly-message"></span>
+	</section>
+
+	<div id="weekly-loading" class="weekly-state">
+		<img src="{{url_base}}/static/img/loading.svg" alt="">
+		<p>Loading weekly issues...</p>
+	</div>
+	<div id="weekly-empty" class="weekly-state hidden">
+		<p>No weekly issues match these filters.</p>
+	</div>
+	<div id="weekly-list" class="hidden"></div>
+
+	<nav id="weekly-pagination" class="hidden" aria-label="Weekly Pack pages">
+		<button id="weekly-previous" type="button">Previous</button>
+		<span id="weekly-page"></span>
+		<button id="weekly-next" type="button">Next</button>
+	</nav>
+</main>
+{% endblock main %}

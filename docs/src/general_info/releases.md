@@ -1,7 +1,7 @@
 # Releases And Publishers
 
-The Releases page shows recent releases, upcoming releases, and upcoming issues
-for monitored volumes in your library.
+The Releases page shows recent releases, upcoming releases, upcoming issues for
+monitored volumes in your library, and supplemental release discovery.
 
 ## Filtering And Sorting
 
@@ -12,6 +12,35 @@ or publisher. The selected release type, range, sort order, custom dates, and
 
 The page initially renders 100 results. Use "Load More" to show the next 100
 without making another metadata request.
+
+## Supplemental Discovery
+
+Choose 'Discovery' to combine dated publisher/distributor listings with actual
+GetComics availability. Records show every source that contributed to the
+match, whether the issue is available, and its local status. Marvel's official
+calendar, DC's catalog, Lunar's dated release data, and GetComics Weekly Packs
+are supplemental sources; ComicVine or Metron remains canonical.
+
+'Metadata Pending' means one exact local volume was found, but the announced
+issue is not yet in its canonical metadata. Kapowarr keeps a lightweight watch
+and checks again after metadata refreshes. It does not create a provisional
+issue. Ambiguous, unmonitored, and unknown items remain review-only.
+
+Each supplemental provider fails independently. Previously cached records from
+other providers remain available if one source is blocked or temporarily
+offline.
+
+## Weekly Packs
+
+Releases -> Weekly Packs lists the individual issue articles from recent
+GetComics weekly posts, grouped by week and publisher. Filter by publisher,
+local status, or title. 'Select Missing' selects only exact monitored local
+issues without files; 'Queue Selected' revalidates every item on the server
+before using the normal issue download path.
+
+Publisher-wide JPG and WebP archives can be several gigabytes. They are shown
+separately as warning-labelled external links and are never queued or extracted
+by the Weekly Packs workflow.
 
 ## Cached Metadata
 
@@ -28,10 +57,11 @@ a previously cached complete response when one is available.
 
 ## Catching Up A Library
 
-The Volumes page has Recently Added and Recently Released filters through 365
-days, together with Recently Added and Recently Released sorting. Use these to
-review a library that has not been updated for an extended period.
+The Volumes page has independent Status and Date filters. Recently Added and
+Recently Released ranges cover up to 365 days and can be combined with missing
+status, publisher, description, and text filters.
 
 Manually selecting Update All refreshes every applicable volume. The automatic
-scheduled Update All may skip volumes that were refreshed recently. Search All
-then searches monitored, missing issues using the latest stored metadata.
+scheduled Update All may skip volumes that were refreshed recently. Search
+Missing searches monitored gaps using the latest stored metadata. Refresh &
+Search Missing refreshes the same filtered volume snapshot first.

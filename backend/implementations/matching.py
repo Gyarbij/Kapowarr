@@ -12,14 +12,23 @@ from math import floor
 from re import compile
 from typing import TYPE_CHECKING, Dict, List, Mapping, Tuple, Union
 
-from backend.base.definitions import IssueData, SpecialVersion, VolumeMetadata
+from backend.base.definitions import (
+    IssueData,
+    SearchResultMatchReason,
+    SpecialVersion,
+    VolumeMetadata,
+)
 from backend.base.file_extraction import special_version_regex
 from backend.base.helpers import force_range, normalise_query_string
 from backend.implementations.blocklist import blocklist_contains
 
 if TYPE_CHECKING:
-    from backend.base.definitions import (FilenameData, SearchResultData,
-                                          SearchResultMatchData, VolumeData)
+    from backend.base.definitions import (
+        FilenameData,
+        SearchResultData,
+        SearchResultMatchData,
+        VolumeData,
+    )
 
 clean_title_regex = compile(
     r'((?<=annual)s|/|\-|–|\+|,|\.|\!|:|\bthe\s|\band\b|&|’|\'|\"|\bone[\-\s]?shot\b|\bhard[\-\s]?cover\b|\bomnibus\b|\btpb\b)'
@@ -454,19 +463,40 @@ def check_search_result_match(
     Returns:
         SearchResultMatchData: Whether the search result passes the filter.
     """
+    def decision(
+        reason: Union[SearchResultMatchReason, None] = None,
+        message: Union[str, None] = None,
+        issue_ids: Union[List[int], None] = None
+    ) -> SearchResultMatchData:
+        return {
+            'match': reason is None,
+            'match_issue': message,
+            'match_reason_code': reason.value if reason else None,
+            'matched_issue_ids': issue_ids or []
+        }
+
     annual = 'annual' in volume_data.title.lower()
 
     if blocklist_contains(result['link']):
-        return {'match': False, 'match_issue': 'Link is blocklisted'}
+        return decision(
+            SearchResultMatchReason.BLOCKLISTED,
+            'Link is blocklisted'
+        )
 
     if result['annual'] != annual:
-        return {'match': False, 'match_issue': 'Annual conflict'}
+        return decision(
+            SearchResultMatchReason.ANNUAL_CONFLICT,
+            'Annual conflict'
+        )
 
     if not (
         match_title(volume_data.title, result['series'])
         or match_title(volume_data.alt_title or '', result['series'])
     ):
-        return {'match': False, 'match_issue': "Titles don't match"}
+        return decision(
+            SearchResultMatchReason.TITLE_MISMATCH,
+            "Titles don't match"
+        )
 
     if not match_volume_number(
         volume_data,
@@ -474,7 +504,10 @@ def check_search_result_match(
         result['volume_number'],
         conservative=True
     ):
-        return {'match': False, 'match_issue': "Volume numbers don't match"}
+        return decision(
+            SearchResultMatchReason.VOLUME_NUMBER_MISMATCH,
+            "Volume numbers don't match"
+        )
 
     if not match_special_version(
         volume_data.special_version,
@@ -482,7 +515,10 @@ def check_search_result_match(
         volume_data.title,
         result['issue_number']
     ):
-        return {'match': False, 'match_issue': 'Special version conflict'}
+        return decision(
+            SearchResultMatchReason.SPECIAL_VERSION_CONFLICT,
+            'Special version conflict'
+        )
 
     if result['issue_number'] is not None:
         issue_number = result['issue_number']
@@ -496,13 +532,14 @@ def check_search_result_match(
     else:
         issue_number = float('-inf')
 
-    if not match_year(
-        volume_data.year,
-        result['year'],
-        number_to_year.get(force_range(issue_number)[-1]),
-        conservative=True
-    ):
-        return {'match': False, 'match_issue': "Year doesn't match"}
+    issue_range = force_range(issue_number)
+    matched_issues = [
+        issue
+        for issue in volume_issues
+        if issue_range[0]
+        <= issue.calculated_issue_number
+        <= issue_range[-1]
+    ]
 
     if volume_data.special_version in (
         SpecialVersion.NORMAL,
@@ -512,20 +549,58 @@ def check_search_result_match(
             # Volume search
             if not all(
                 i in number_to_year
-                for i in force_range(issue_number)
+                for i in issue_range
             ):
                 # One of the extracted issue numbers is not found in volume
-                return {
-                    'match': False,
-                    'match_issue': "Issue numbers don't match"
-                }
+                return decision(
+                    SearchResultMatchReason.ISSUE_NUMBER_MISMATCH,
+                    "Issue numbers don't match"
+                )
 
         elif issue_number != calculated_issue_number:
             # Issue search, but
             # extracted issue number(s) don't match number of searched issue
-            return {'match': False, 'match_issue': "Issue numbers don't match"}
+            return decision(
+                SearchResultMatchReason.ISSUE_NUMBER_MISMATCH,
+                "Issue numbers don't match"
+            )
 
-    return {'match': True, 'match_issue': None}
+    matched_years = [
+        year
+        for issue in matched_issues
+        if (year := number_to_year.get(issue.calculated_issue_number))
+        is not None
+    ]
+    if matched_years:
+        reference_year = min(matched_years)
+        end_year = max(matched_years)
+    else:
+        known_years = [
+            year
+            for year in number_to_year.values()
+            if year is not None
+        ]
+        reference_year = volume_data.year
+        end_year = max(known_years) if known_years else volume_data.year
+
+    if not match_year(
+        reference_year,
+        result['year'],
+        end_year,
+        conservative=True
+    ):
+        return decision(
+            SearchResultMatchReason.YEAR_MISMATCH,
+            "Year doesn't match"
+        )
+
+    if not matched_issues and volume_data.special_version not in (
+        SpecialVersion.NORMAL,
+        SpecialVersion.VOLUME_AS_ISSUE
+    ):
+        matched_issues = volume_issues
+
+    return decision(issue_ids=[issue.id for issue in matched_issues])
 
 
 ONE_ISSUE_MATCH = (

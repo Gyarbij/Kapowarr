@@ -16,8 +16,10 @@ from backend.base.definitions import (
     DownloadSource,
     FileMatch,
     KapowarrException,
+    LibraryDateFilter,
     LibraryFilter,
     LibrarySorting,
+    LibraryStatusFilter,
     MonitorScheme,
     SpecialVersion,
     StartType,
@@ -59,9 +61,14 @@ from backend.implementations.naming import (
     generate_volume_folder_name,
     preview_mass_rename,
 )
+from backend.implementations.release_discovery import get_release_discovery
 from backend.implementations.remote_mapping import RemoteMappings
 from backend.implementations.root_folders import RootFolders
 from backend.implementations.volumes import Library, delete_issue_file
+from backend.implementations.weekly_packs import (
+    get_enriched_weekly_packs,
+    queue_weekly_pack_items,
+)
 from backend.internals.db import get_db
 from backend.internals.db_models import FilesDB
 from backend.internals.server import Server, StartTypeHandlers
@@ -160,6 +167,18 @@ def extract_key(request, key: str, check_existence: bool = True) -> Any:
         elif key == 'filter':
             try:
                 value = LibraryFilter[value.upper()] if value else None
+            except KeyError:
+                raise InvalidKeyValue(key, value)
+
+        elif key == 'status_filter':
+            try:
+                value = LibraryStatusFilter[value.upper()] if value else None
+            except KeyError:
+                raise InvalidKeyValue(key, value)
+
+        elif key == 'date_filter':
+            try:
+                value = LibraryDateFilter[value.upper()] if value else None
             except KeyError:
                 raise InvalidKeyValue(key, value)
 
@@ -826,6 +845,8 @@ def api_volumes():
         query = extract_key(request, 'query', False)
         sort = extract_key(request, 'sort', False)
         filter = extract_key(request, 'filter', False)
+        status_filter = extract_key(request, 'status_filter', False)
+        date_filter = extract_key(request, 'date_filter', False)
         offset = extract_key(request, 'offset', False)
         limit = extract_key(request, 'limit', False)
         page = extract_key(request, 'page', False)
@@ -859,6 +880,11 @@ def api_volumes():
         minimal_raw = request.values.get('minimal', 'false')
         minimal = minimal_raw == 'true'
 
+        if filter is not None and (
+            status_filter is not None or date_filter is not None
+        ):
+            raise InvalidKeyValue('filter', filter.value)
+
         if query:
             volumes = Library.search(
                 query, sort, filter,
@@ -866,13 +892,17 @@ def api_volumes():
                 limit=limit,
                 minimal=minimal,
                 publisher=publisher,
-                has_description=has_description
+                has_description=has_description,
+                status_filter=status_filter,
+                date_filter=date_filter
             )
             total = Library.search_count(
                 query,
                 filter,
                 publisher=publisher,
-                has_description=has_description
+                has_description=has_description,
+                status_filter=status_filter,
+                date_filter=date_filter
             )
         else:
             volumes = Library.get_public_volumes(
@@ -881,12 +911,16 @@ def api_volumes():
                 limit=limit,
                 minimal=minimal,
                 publisher=publisher,
-                has_description=has_description
+                has_description=has_description,
+                status_filter=status_filter,
+                date_filter=date_filter
             )
             total = Library.get_volume_count(
                 filter,
                 publisher=publisher,
-                has_description=has_description
+                has_description=has_description,
+                status_filter=status_filter,
+                date_filter=date_filter
             )
 
         result: Dict[str, Any] = {
@@ -1183,6 +1217,157 @@ def _validate_release_range(start_date: str, end_date: str) -> None:
         ) from exc
     if end < start or (end - start).days > 365:
         raise InvalidKeyValue('date_range', f'{start_date}|{end_date}')
+
+
+def _filter_discovery_items(items: List[dict]) -> List[dict]:
+    publisher = (request.values.get('publisher') or '').strip().lower()
+    local_status = (request.values.get('local_status') or '').strip()
+    provider = (request.values.get('provider') or '').strip()
+    text_query = (request.values.get('query') or '').strip().lower()
+    allowed_statuses = {
+        'downloaded',
+        'missing_monitored',
+        'missing_unmonitored',
+        'metadata_pending',
+        'not_in_library',
+        'ambiguous'
+    }
+    if local_status and local_status not in allowed_statuses:
+        raise InvalidKeyValue('local_status', local_status)
+
+    def publisher_matches(item: dict) -> bool:
+        item_publisher = (item.get('publisher') or '').lower()
+        if not publisher:
+            return True
+        if publisher == 'indie':
+            return not any(
+                major in item_publisher
+                for major in ('dc', 'marvel', 'image')
+            )
+        return publisher in item_publisher
+
+    return [
+        item
+        for item in items
+        if publisher_matches(item)
+        and (
+            not local_status
+            or item.get('local_status') == local_status
+        )
+        and (
+            not provider
+            or provider in item.get('providers', [item.get('provider')])
+        )
+        and (
+            not text_query
+            or text_query in item.get('series_title', '').lower()
+        )
+    ]
+
+
+@api.route('/releases/discovery', methods=['GET'])
+@error_handler
+@auth
+def api_release_discovery():
+    today = datetime.now().date()
+    start_date = extract_key(request, 'start_date', False)
+    end_date = extract_key(request, 'end_date', False)
+    start_date = start_date or (today - timedelta(days=60)).isoformat()
+    end_date = end_date or (today + timedelta(days=30)).isoformat()
+    _validate_release_range(start_date, end_date)
+
+    items = run(get_release_discovery(
+        start_date,
+        end_date,
+        force_refresh=_force_metadata_refresh()
+    ))
+    items = _filter_discovery_items(items)
+    page = _metadata_int_param('page', 1, 10000)
+    per_page = _metadata_int_param('per_page', 100, 500)
+    start = (page - 1) * per_page
+    return return_api({
+        'items': items[start:start + per_page],
+        'total': len(items),
+        'page': page,
+        'per_page': per_page,
+        'total_pages': max(1, (len(items) + per_page - 1) // per_page)
+    })
+
+
+@api.route('/weekly-packs', methods=['GET', 'POST'])
+@error_handler
+@auth
+def api_weekly_packs():
+    if request.method == 'POST':
+        data = request.get_json()
+        if not isinstance(data, dict):
+            raise InvalidKeyValue('body', data)
+        record_keys = data.get('record_keys')
+        weeks = data.get('weeks', 8)
+        if not (
+            isinstance(record_keys, list)
+            and 0 < len(record_keys) <= 100
+            and all(isinstance(key, str) and key for key in record_keys)
+        ):
+            raise InvalidKeyValue('record_keys', record_keys)
+        if not isinstance(weeks, int) or not 1 <= weeks <= 50:
+            raise InvalidKeyValue('weeks', weeks)
+
+        outcomes = run(queue_weekly_pack_items(record_keys, weeks))
+        counts: Dict[str, int] = {}
+        for outcome in outcomes:
+            status = outcome['status']
+            counts[status] = counts.get(status, 0) + 1
+        return return_api({
+            'counts': counts,
+            'items': outcomes
+        }, code=201)
+
+    weeks = _metadata_int_param('weeks', 8, 50)
+    packs = run(get_enriched_weekly_packs(
+        weeks,
+        force_refresh=_force_metadata_refresh()
+    ))
+    publisher = (request.values.get('publisher') or '').strip().lower()
+    local_status = (request.values.get('local_status') or '').strip()
+    text_query = (request.values.get('query') or '').strip().lower()
+    filtered_packs = []
+    for pack in packs:
+        items = _filter_discovery_items(pack['items'])
+        archives = [
+            archive
+            for archive in pack['archives']
+            if not publisher
+            or publisher in (archive.get('publisher') or '').lower()
+        ]
+        if items or (
+            archives
+            and not local_status
+            and not text_query
+        ):
+            filtered_packs.append({
+                **pack,
+                'items': items,
+                'archives': archives
+            })
+
+    page = _metadata_int_param('page', 1, 10000)
+    per_page = _metadata_int_param('per_page', 8, 20)
+    start = (page - 1) * per_page
+    return return_api({
+        'packs': filtered_packs[start:start + per_page],
+        'total_packs': len(filtered_packs),
+        'total_items': sum(
+            len(pack['items'])
+            for pack in filtered_packs
+        ),
+        'page': page,
+        'per_page': per_page,
+        'total_pages': max(
+            1,
+            (len(filtered_packs) + per_page - 1) // per_page
+        )
+    })
 
 
 @api.route('/releases/new', methods=['GET'])
@@ -1840,8 +2025,8 @@ def api_mass_editor():
     if not isinstance(args, dict):
         raise InvalidKeyValue('args', args)
 
-    run_mass_editor_action(action, volume_ids, **args)
-    return return_api({})
+    result = run_mass_editor_action(action, volume_ids, **args)
+    return return_api(result or {})
 
 
 # =====================

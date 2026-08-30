@@ -66,6 +66,27 @@ class DatabaseMigrationReconciliationTest(unittest.TestCase):
         ):
             db_migration._migrate_reconcile_divergent_version_44()
 
+    def test_release_discovery_migration_is_idempotent(self):
+        self.connection.execute(
+            'CREATE TABLE volumes (id INTEGER PRIMARY KEY);'
+        )
+        with patch.object(
+            db_migration,
+            'get_db',
+            return_value=self.connection
+        ):
+            db_migration._migrate_add_release_discovery()
+            db_migration._migrate_add_release_discovery()
+
+        tables = {
+            row[0]
+            for row in self.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table';"
+            )
+        }
+        self.assertIn('release_discovery', tables)
+        self.assertIn('pending_release_watches', tables)
+
     def test_reconciles_upstream_version_45_schema(self):
         self._create_common_tables(forced=True)
 

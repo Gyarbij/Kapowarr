@@ -71,9 +71,15 @@
 			) }}
 			{{ icon_button(
 				"searchall-button",
-				"Trigger a 'search monitored' for all volumes",
+				"Search monitored issues without files in the current view",
 				"search.svg",
-				"Search All"
+				"Search Missing"
+			) }}
+			{{ icon_button(
+				"refreshsearch-button",
+				"Refresh metadata, then search monitored issues without files",
+				"refresh.svg",
+				"Refresh & Search Missing"
 			) }}
 			{{ icon_button(
 				"massedit-button",
@@ -83,16 +89,19 @@
 			) }}
 		</div>
 		<div class="tool-bar">
-			<select id="filter-button" aria-label="Apply a filter">
-				<option value="">No Filter</option>
-				<option value="wanted">Wanted</option>
-				<option value="missing_monitored">Missing Issues (Monitored Only)</option>
-				<option value="missing">Missing Issues (Any)</option>
-				<option value="complete">Complete</option>
-				<option value="no_issues">No Issues</option>
-				<option value="downloaded">Has Downloads</option>
+			<select id="status-filter" aria-label="Filter by library status">
+				<option value="">All Statuses</option>
+				<option value="missing_monitored">Wanted / Missing Monitored</option>
+				<option value="missing">Missing Any</option>
 				<option value="monitored">Monitored</option>
 				<option value="unmonitored">Unmonitored</option>
+				<option value="complete">Complete</option>
+				<option value="partially_downloaded">Partially Downloaded</option>
+				<option value="downloaded">Has Downloads</option>
+				<option value="no_issues">No Issues</option>
+			</select>
+			<select id="date-filter" aria-label="Filter by library date">
+				<option value="">All Dates</option>
 				<option value="recently_added_7">Recently Added (7 days)</option>
 				<option value="recently_added_30">Recently Added (30 days)</option>
 				<option value="recently_added_90">Recently Added (90 days)</option>
@@ -103,7 +112,6 @@
 				<option value="recently_released_90">Recently Released (90 days)</option>
 				<option value="recently_released_180">Recently Released (180 days)</option>
 				<option value="recently_released_365">Recently Released (365 days)</option>
-				<option value="has_description">Has Description</option>
 			</select>
 			<select id="publisher-filter" aria-label="Filter by publisher">
 				<option value="">All Publishers</option>
@@ -128,9 +136,10 @@
 			</select>
 		</div>
 	</section>
+	<p id="library-scope" role="status"></p>
+	<p id="massedit-progress" role="status" aria-live="polite"></p>
 	<div id="loading-library" class="loading-screen">
 		<h2>Loading...</h2>
-		<p id="massedit-progress"></p>
 		<noscript>
 			WARNING: This web-UI does not work without JavaScript.
 		</noscript>

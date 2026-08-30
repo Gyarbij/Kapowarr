@@ -76,6 +76,11 @@ def ui_releases():
     return render('releases.html')
 
 
+@ui.route('/weekly-packs', methods=methods)
+def ui_weekly_packs():
+    return render('weekly_packs.html')
+
+
 @ui.route('/publishers', methods=methods)
 def ui_publishers():
     return render('publishers.html')

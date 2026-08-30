@@ -15,21 +15,42 @@ from os.path import abspath, isdir, join, sep
 from secrets import token_bytes
 from typing import Any, Dict, Mapping
 
-from backend.base.custom_exceptions import (ClientNotWorking,
-                                            CredentialInvalid,
-                                            FolderNotFound, InvalidKeyValue,
-                                            InvalidSettingModification,
-                                            KeyNotFound)
-from backend.base.definitions import (BaseEnum, Constants, DateType,
-                                      FileDate, GCDownloadSource, OSType,
-                                      ProxyType, SeedingHandling)
-from backend.base.files import (are_folders_colliding, folder_path,
-                                uppercase_drive_letter)
-from backend.base.helpers import (CommaList, Singleton, build_proxy_url,
-                                  can_run_64bit_executable, force_suffix,
-                                  get_os_type, get_python_version,
-                                  get_version_from_pyproject, hash_credential,
-                                  normalise_base_url, test_proxy_url)
+from backend.base.custom_exceptions import (
+    ClientNotWorking,
+    CredentialInvalid,
+    FolderNotFound,
+    InvalidKeyValue,
+    InvalidSettingModification,
+    KeyNotFound,
+)
+from backend.base.definitions import (
+    BaseEnum,
+    Constants,
+    DateType,
+    FileDate,
+    GCDownloadSource,
+    OSType,
+    ProxyType,
+    SeedingHandling,
+)
+from backend.base.files import (
+    are_folders_colliding,
+    folder_path,
+    uppercase_drive_letter,
+)
+from backend.base.helpers import (
+    CommaList,
+    Singleton,
+    build_proxy_url,
+    can_run_64bit_executable,
+    force_suffix,
+    get_os_type,
+    get_python_version,
+    get_version_from_pyproject,
+    hash_credential,
+    normalise_base_url,
+    test_proxy_url,
+)
 from backend.base.logging import LOGGER, set_log_level
 from backend.internals.db import DBConnection, commit, get_db
 from backend.internals.db_migration import DatabaseMigrationHandler
@@ -173,7 +194,8 @@ task_intervals = {
     # but per se after each other, put them in that order in the dict.
     'update_all': 3600, # every hour
     'search_all': 86400, # every day
-    'refresh_release_cache': 3600 # every hour
+    'refresh_release_cache': 3600, # every hour
+    'refresh_release_discovery': 3600 # every hour
 }
 
 
@@ -273,8 +295,7 @@ class Settings(metaclass=Singleton):
             InvalidSettingModification: Key can not be modified this way.
             FolderNotFound: Folder not found.
         """
-        from backend.implementations.naming import (NAMING_MAPPING,
-                                                    check_mock_filename)
+        from backend.implementations.naming import NAMING_MAPPING, check_mock_filename
 
         formatted_data = {}
         for key, value in data.items():
@@ -591,8 +612,7 @@ class Settings(metaclass=Singleton):
                 raise InvalidKeyValue(key, value)
 
         else:
-            from backend.implementations.naming import (NAMING_MAPPING,
-                                                        check_format)
+            from backend.implementations.naming import NAMING_MAPPING, check_format
             if key in NAMING_MAPPING:
                 # Check naming formats
                 converted_value = value.strip().strip(sep)

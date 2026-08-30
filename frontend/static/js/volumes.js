@@ -12,13 +12,15 @@ const library_els = {
 	view_options: {
 		sort: document.querySelector('#sort-button'),
 		view: document.querySelector('#view-button'),
-		filter: document.querySelector('#filter-button'),
+		status: document.querySelector('#status-filter'),
+		date: document.querySelector('#date-filter'),
 		publisher: document.querySelector('#publisher-filter'),
 		description: document.querySelector('#description-filter')
 	},
 	task_buttons: {
 		update_all: document.querySelector('#updateall-button'),
-		search_all: document.querySelector('#searchall-button')
+		search_all: document.querySelector('#searchall-button'),
+		refresh_search: document.querySelector('#refreshsearch-button')
 	},
 	search: {
 		clear: document.querySelector('#clear-search'),
@@ -40,7 +42,8 @@ const library_els = {
 		toggle: document.querySelector('#massedit-toggle'),
 		select_all: document.querySelector('#selectall-input'),
 		cancel: document.querySelector('#cancel-massedit'),
-		progress: document.querySelector('#massedit-progress')
+		progress: document.querySelector('#massedit-progress'),
+		scope: document.querySelector('#library-scope')
 	},
 	pagination: {
 		container: document.querySelector('#pagination-controls'),
@@ -270,7 +273,8 @@ function updatePaginationControls() {
 function getVolumeParams() {
 	const params = {
 		sort: library_els.view_options.sort.value,
-		filter: library_els.view_options.filter.value,
+		status_filter: library_els.view_options.status.value,
+		date_filter: library_els.view_options.date.value,
 		minimal: 'true'
 	};
 
@@ -312,6 +316,16 @@ function fetchLibrary(api_key) {
 			if (requestId !== libraryRequestId) return;
 			const result = json.result;
 			state.currentVolumes = result.volumes;
+			const openIssues = result.volumes.reduce(
+				(total, volume) => total + Math.max(
+					0,
+					volume.issue_count_monitored
+						- volume.issues_downloaded_monitored
+				),
+				0
+			);
+			library_els.mass_edit.scope.innerText =
+				`${result.volumes.length} visible volumes · ${openIssues} monitored issues missing`;
 
 			paginationState.totalItems = result.total || 0;
 			if (state.displayMode === 'pagination') {
@@ -401,7 +415,8 @@ function fetchPublishers(api_key) {
 
 function hasActiveLibraryFilter() {
 	return (
-		library_els.view_options.filter.value !== ''
+		library_els.view_options.status.value !== ''
+		|| library_els.view_options.date.value !== ''
 		|| library_els.search.input.value !== ''
 		|| library_els.view_options.publisher.value !== ''
 		|| library_els.view_options.description.value !== ''
@@ -411,7 +426,8 @@ function hasActiveLibraryFilter() {
 function getAllFilteredVolumeIds(api_key) {
 	const params = {
 		sort: library_els.view_options.sort.value,
-		filter: library_els.view_options.filter.value,
+		status_filter: library_els.view_options.status.value,
+		date_filter: library_els.view_options.date.value,
 		minimal: 'true',
 		per_page: 0
 	};
@@ -463,9 +479,38 @@ function runUpdateAll(api_key) {
 		});
 }
 
-function runSearchAll(api_key) {
+function formatSearchOutcome(outcome) {
+	const rejected = Object.values(outcome.rejections || {})
+		.reduce((total, count) => total + count, 0);
+	const parts = [
+		`${outcome.volumes_scanned} volumes scanned`,
+		`${outcome.open_issues} open monitored issues`,
+		`${outcome.candidates_found} candidates`,
+		`${outcome.matched_candidates} matched`,
+		`${outcome.queued_links} queued`,
+		`${outcome.already_queued_links} already queued`,
+		`${rejected} rejected`
+	];
+	const rejection_reasons = Object.entries(outcome.rejections || {});
+	if (rejection_reasons.length)
+		parts.push(rejection_reasons
+			.map(([reason, count]) => `${reason.replaceAll('_', ' ')}: ${count}`)
+			.join(', '));
+	const enqueue_failures = Object.entries(outcome.enqueue_failures || {});
+	if (enqueue_failures.length)
+		parts.push(enqueue_failures
+			.map(([reason, count]) => `${reason}: ${count}`)
+			.join(', '));
+	if (outcome.volumes_skipped)
+		parts.push(`${outcome.volumes_skipped} unmonitored volumes skipped`);
+	return parts.join(' · ');
+}
+
+function runSearchMissing(api_key, refresh=false) {
 	if (!hasActiveLibraryFilter()) {
-		sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'search_all'});
+		sendAPI('POST', '/system/tasks', api_key, {}, {
+			'cmd': refresh ? 'refresh_search_all' : 'search_all'
+		});
 		return;
 	}
 
@@ -482,11 +527,15 @@ function runSearchAll(api_key) {
 
 			return sendAPI('POST', '/masseditor', api_key, {}, {
 				'volume_ids': volume_ids,
-				'action': 'search',
+				'action': refresh ? 'refresh_search' : 'search',
 				'args': {}
-			}).then(() => {
-				library_els.mass_edit.progress.innerText = `Queued search for ${volume_ids.length} filtered volumes`;
-				fetchLibrary(api_key);
+			})
+			.then(response => response.json())
+			.then(json => {
+				const summary = formatSearchOutcome(json.result);
+				return fetchLibrary(api_key).then(() => {
+					library_els.mass_edit.progress.innerText = summary;
+				});
 			});
 		});
 }
@@ -510,14 +559,37 @@ const lib_options = getLocalStorage(
 	'lib_sorting',
 	'lib_view',
 	'lib_filter',
+	'lib_status_filter',
+	'lib_date_filter',
 	'lib_page_size',
 	'lib_publisher_filter',
 	'lib_description_filter'
 );
 
+if (!lib_options.lib_status_filter && !lib_options.lib_date_filter) {
+	const legacy_filter = lib_options.lib_filter;
+	if (legacy_filter && legacy_filter.startsWith('recently_'))
+		lib_options.lib_date_filter = legacy_filter;
+	else if (legacy_filter === 'wanted')
+		lib_options.lib_status_filter = 'missing_monitored';
+	else if (legacy_filter === 'has_description')
+		lib_options.lib_description_filter = 'true';
+	else if (legacy_filter)
+		lib_options.lib_status_filter = legacy_filter;
+
+	if (legacy_filter)
+		setLocalStorage({
+			'lib_status_filter': lib_options.lib_status_filter || '',
+			'lib_date_filter': lib_options.lib_date_filter || '',
+			'lib_description_filter': lib_options.lib_description_filter || '',
+			'lib_filter': ''
+		});
+}
+
 library_els.view_options.sort.value = lib_options.lib_sorting;
 library_els.view_options.view.value = lib_options.lib_view;
-library_els.view_options.filter.value = lib_options.lib_filter;
+library_els.view_options.status.value = lib_options.lib_status_filter || '';
+library_els.view_options.date.value = lib_options.lib_date_filter || '';
 library_els.view_options.publisher.value = lib_options.lib_publisher_filter || '';
 library_els.view_options.description.value = lib_options.lib_description_filter || '';
 
@@ -545,7 +617,9 @@ Promise.all([usingApiKey(), socketReady])
 		library_els.task_buttons.update_all.onclick =
 			() => runUpdateAll(api_key);
 		library_els.task_buttons.search_all.onclick =
-			() => runSearchAll(api_key);
+			() => runSearchMissing(api_key);
+		library_els.task_buttons.refresh_search.onclick =
+			() => runSearchMissing(api_key, true);
 
 		library_els.view_options.sort.onchange = () => {
 			setLocalStorage({'lib_sorting': library_els.view_options.sort.value});
@@ -558,8 +632,14 @@ Promise.all([usingApiKey(), socketReady])
 			renderLibrary(state.currentVolumes, api_key);
 		};
 
-		library_els.view_options.filter.onchange = () => {
-			setLocalStorage({'lib_filter': library_els.view_options.filter.value});
+		library_els.view_options.status.onchange = () => {
+			setLocalStorage({'lib_status_filter': library_els.view_options.status.value});
+			paginationState.currentPage = 1;
+			fetchLibrary(api_key);
+		};
+
+		library_els.view_options.date.onchange = () => {
+			setLocalStorage({'lib_date_filter': library_els.view_options.date.value});
 			paginationState.currentPage = 1;
 			fetchLibrary(api_key);
 		};
@@ -643,7 +723,9 @@ Promise.all([usingApiKey(), socketReady])
 		);
 		activeSocket.on(
 			'mass_editor_status',
-			data => library_els.mass_edit.progress.innerText = `${data.current_item}/${data.total_items}`
+			data => library_els.mass_edit.progress.innerText = data.summary
+				? formatSearchOutcome(data.summary)
+				: `${data.current_item}/${data.total_items}`
 		);
 	});
 library_els.search.container.action = 'javascript:searchLibrary();';

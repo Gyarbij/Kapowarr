@@ -214,7 +214,7 @@ tbody .issue-title:hover {
 }
 
 #search-result-table {
-	min-width: 500px;
+	min-width: 680px;
 }
 
 .search-entry {
@@ -237,7 +237,11 @@ tbody .issue-title:hover {
 	width: 18px;
 }
 
-.search-entry > td:nth-child(2) {
+.match-reason-column {
+	width: 11rem;
+}
+
+.search-entry > td:nth-child(3) {
 	width: 100%;
 }
 

@@ -1344,3 +1344,36 @@ def _migrate_source_aware_metadata_cache():
     """)
 
     return
+
+
+@DatabaseMigrationHandler.register_handler(48)
+def _migrate_add_release_discovery():
+    get_db().executescript("""
+        CREATE TABLE IF NOT EXISTS release_discovery(
+            provider VARCHAR(30) NOT NULL,
+            record_key TEXT NOT NULL,
+            external_id TEXT,
+            external_url TEXT,
+            publisher TEXT,
+            series_title TEXT NOT NULL,
+            series_year INTEGER,
+            issue_number REAL,
+            issue_year INTEGER,
+            release_date VARCHAR(10),
+            cover_url TEXT,
+            source_updated_at TEXT,
+            available BOOL NOT NULL DEFAULT 0,
+            fetched_at INTEGER NOT NULL,
+            PRIMARY KEY(provider, record_key)
+        );
+        CREATE TABLE IF NOT EXISTS pending_release_watches(
+            record_key TEXT PRIMARY KEY,
+            volume_id INTEGER NOT NULL,
+            first_seen INTEGER NOT NULL,
+            last_checked INTEGER NOT NULL,
+
+            FOREIGN KEY (volume_id) REFERENCES volumes(id)
+                ON DELETE CASCADE
+        );
+    """)
+    return

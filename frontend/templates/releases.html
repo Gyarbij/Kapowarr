@@ -93,6 +93,7 @@
 			<option value="recent">Recent Releases</option>
 			<option value="upcoming">Upcoming</option>
 			<option value="library">My Library Upcoming</option>
+			<option value="discovery">Discovery</option>
 		</select>
 		<select id="days-select" aria-label="Time range">
 			<option value="7">Last 7 Days</option>
@@ -115,6 +116,22 @@
 			<option value="title-desc">Title Z-A</option>
 			<option value="publisher-asc">Publisher A-Z</option>
 			<option value="publisher-desc">Publisher Z-A</option>
+		</select>
+		<select id="discovery-provider" class="hidden" aria-label="Availability source">
+			<option value="">All Sources</option>
+			<option value="getcomics">GetComics Available</option>
+			<option value="marvel">Marvel Calendar</option>
+			<option value="dc">DC Catalog</option>
+			<option value="lunar">Lunar Releases</option>
+		</select>
+		<select id="discovery-status" class="hidden" aria-label="Local status">
+			<option value="">All Local Statuses</option>
+			<option value="missing_monitored">Missing Monitored</option>
+			<option value="missing_unmonitored">Missing Unmonitored</option>
+			<option value="downloaded">Downloaded</option>
+			<option value="metadata_pending">Metadata Pending</option>
+			<option value="not_in_library">Not In Library</option>
+			<option value="ambiguous">Needs Review</option>
 		</select>
 	</div>
 {% endblock %}

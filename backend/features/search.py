@@ -1,19 +1,78 @@
 # -*- coding: utf-8 -*-
 
 from asyncio import gather, run
+from collections import Counter
 from typing import Dict, List, Tuple, Union
 
-from backend.base.definitions import (QUERY_FORMATS, MatchedSearchResultData,
-                                      SearchResultData, SearchSource,
-                                      SpecialVersion)
+from backend.base.definitions import (
+    QUERY_FORMATS,
+    MatchedSearchResultData,
+    SearchOutcomeData,
+    SearchResultData,
+    SearchSource,
+    SpecialVersion,
+)
 from backend.base.file_extraction import refine_special_version
-from backend.base.helpers import (AsyncSession, check_overlapping_issues,
-                                  extract_year_from_date, force_range,
-                                  get_subclasses, normalise_query_string)
+from backend.base.helpers import (
+    AsyncSession,
+    check_overlapping_issues,
+    extract_year_from_date,
+    force_range,
+    get_subclasses,
+    normalise_query_string,
+)
 from backend.base.logging import LOGGER
 from backend.implementations.getcomics import search_getcomics
 from backend.implementations.matching import check_search_result_match
 from backend.implementations.volumes import Volume
+
+
+def create_search_outcome() -> SearchOutcomeData:
+    return {
+        'volumes_scanned': 0,
+        'volumes_skipped': 0,
+        'open_issues': 0,
+        'candidates_found': 0,
+        'matched_candidates': 0,
+        'selected_links': 0,
+        'queued_links': 0,
+        'already_queued_links': 0,
+        'rejections': {},
+        'enqueue_failures': {}
+    }
+
+
+def format_search_outcome(outcome: SearchOutcomeData) -> str:
+    rejected = sum(outcome['rejections'].values())
+    summary = (
+        f"Scanned {outcome['volumes_scanned']} volumes; "
+        f"{outcome['open_issues']} open monitored issues; "
+        f"{outcome['candidates_found']} candidates; "
+        f"{outcome['matched_candidates']} matched; "
+        f"{outcome['selected_links']} selected; "
+        f"{outcome['queued_links']} queued; "
+        f"{outcome['already_queued_links']} already queued; "
+        f"{rejected} rejected"
+    )
+    if outcome['rejections']:
+        reasons = ', '.join(
+            f"{reason.replace('_', ' ')}: {count}"
+            for reason, count in sorted(outcome['rejections'].items())
+        )
+        summary += f" ({reasons})"
+    if outcome['enqueue_failures']:
+        failures = ', '.join(
+            f'{reason}: {count}'
+            for reason, count in sorted(outcome['enqueue_failures'].items())
+        )
+        summary += f'; enqueue failures ({failures})'
+    if outcome['volumes_skipped']:
+        summary += f"; {outcome['volumes_skipped']} unmonitored volumes skipped"
+    return summary
+
+
+def _increase_count(counts: Dict[str, int], key: str) -> None:
+    counts[key] = counts.get(key, 0) + 1
 
 
 def _rank_search_result(
@@ -261,7 +320,17 @@ def manual_search(
             calculated_issue_number
         ))
 
-        LOGGER.debug('Manual search results: %s', results)
+        rejection_counts = Counter(
+            result['match_reason_code']
+            for result in results
+            if result['match_reason_code'] is not None
+        )
+        LOGGER.debug(
+            'Manual search results: candidates=%d matches=%d rejections=%s',
+            len(results),
+            sum(result['match'] for result in results),
+            dict(rejection_counts)
+        )
         return results
 
     return []
@@ -269,7 +338,9 @@ def manual_search(
 
 def auto_search(
     volume_id: int,
-    issue_id: Union[int, None] = None
+    issue_id: Union[int, None] = None,
+    outcome: Union[SearchOutcomeData, None] = None,
+    _count_volume: bool = True
 ) -> List[MatchedSearchResultData]:
     """Search for a volume or issue and automatically choose a result.
 
@@ -282,6 +353,11 @@ def auto_search(
     Returns:
         List[MatchedSearchResultData]: List with chosen search results.
     """
+    if outcome is None:
+        outcome = create_search_outcome()
+    if _count_volume:
+        outcome['volumes_scanned'] += 1
+
     volume = Volume(volume_id)
     volume_data = volume.get_data()
     volume_issues = volume.get_issues(_skip_files=True)
@@ -295,7 +371,8 @@ def auto_search(
     searchable_issues: List[Tuple[int, float]] = []
     if not volume_data.monitored:
         # Volume is unmonitored so don't auto search
-        pass
+        if _count_volume:
+            outcome['volumes_skipped'] += 1
 
     elif issue_id is None:
         # Auto search volume
@@ -316,9 +393,23 @@ def auto_search(
         LOGGER.debug(f'Auto search results: {result}')
         return result
 
+    if _count_volume:
+        outcome['open_issues'] += len(searchable_issues)
+
+    manual_results = manual_search(volume_id, issue_id)
+    outcome['candidates_found'] += len(manual_results)
+    outcome['matched_candidates'] += sum(
+        result['match']
+        for result in manual_results
+    )
+    for result in manual_results:
+        reason = result['match_reason_code']
+        if reason is not None:
+            _increase_count(outcome['rejections'], reason)
+
     search_results = [
         r
-        for r in manual_search(volume_id, issue_id)
+        for r in manual_results
         if r['match']
     ]
 
@@ -390,7 +481,12 @@ def auto_search(
     ]
 
     for missing_issue in missing_issues:
-        chosen_downloads.extend(auto_search(volume_id, missing_issue[0]))
+        chosen_downloads.extend(auto_search(
+            volume_id,
+            missing_issue[0],
+            outcome,
+            _count_volume=False
+        ))
 
     LOGGER.debug('Auto search results: %s', chosen_downloads)
     return chosen_downloads

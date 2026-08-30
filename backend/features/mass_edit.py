@@ -1,24 +1,81 @@
 # -*- coding: utf-8 -*-
 
-from typing import List
+from typing import Any, List, Union
 
-from backend.base.custom_exceptions import (InvalidKeyValue, KeyNotFound,
-                                            RootFolderNotFound,
-                                            VolumeDownloadedFor)
+from backend.base.custom_exceptions import (
+    InvalidKeyValue,
+    KeyNotFound,
+    RootFolderNotFound,
+    VolumeDownloadedFor,
+)
 from backend.base.definitions import MassEditorAction, MonitorScheme
 from backend.base.helpers import get_subclasses
 from backend.base.logging import LOGGER
 from backend.features.download_queue import DownloadHandler
-from backend.features.search import auto_search
+from backend.features.search import (
+    auto_search,
+    create_search_outcome,
+    format_search_outcome,
+)
 from backend.implementations.conversion import mass_convert
-from backend.implementations.file_processing import (mass_set_file_date,
-                                                     mass_set_ownership,
-                                                     mass_set_permissions)
+from backend.implementations.file_processing import (
+    mass_set_file_date,
+    mass_set_ownership,
+    mass_set_permissions,
+)
 from backend.implementations.naming import mass_rename
 from backend.implementations.root_folders import RootFolders
 from backend.implementations.volumes import Volume, refresh_and_scan
 from backend.internals.db import iter_commit
 from backend.internals.server import MassEditorStatusEvent, WebSocket
+
+
+def _search_volumes(
+    volume_ids: List[int],
+    identifier: str,
+    progress_offset: int = 0,
+    total_progress: Union[int, None] = None
+):
+    download_handler = DownloadHandler()
+    ws = WebSocket()
+    outcome = create_search_outcome()
+    total_items = total_progress or len(volume_ids)
+
+    for item_index, volume_id in enumerate(iter_commit(volume_ids)):
+        ws.emit(MassEditorStatusEvent(
+            identifier,
+            progress_offset + item_index + 1,
+            total_items
+        ))
+
+        search_results = auto_search(volume_id, outcome=outcome)
+        outcome['selected_links'] += len(search_results)
+        queue_results = []
+        for result in search_results:
+            if download_handler.link_in_queue(result['link']):
+                outcome['already_queued_links'] += 1
+                continue
+
+            queue_results.append((result['link'], volume_id, None, False))
+
+        for added, failure in download_handler.add_multiple(queue_results):
+            outcome['queued_links'] += len(added)
+            if not added and failure is None:
+                outcome['already_queued_links'] += 1
+            elif failure is not None:
+                reason = failure.value
+                failures = outcome['enqueue_failures']
+                failures[reason] = failures.get(reason, 0) + 1
+
+    summary = format_search_outcome(outcome)
+    LOGGER.info('Mass search complete: %s', summary)
+    ws.emit(MassEditorStatusEvent(
+        identifier,
+        total_items,
+        total_items,
+        dict(outcome)
+    ))
+    return outcome
 
 
 class MassEditorDelete(MassEditorAction):
@@ -126,29 +183,40 @@ class MassEditorUpdate(MassEditorAction):
 class MassEditorSearch(MassEditorAction):
     identifier = 'search'
 
-    def run(self, **kwargs) -> None:
+    def run(self, **kwargs):
         LOGGER.info(
             f'Using mass editor, auto searching for volumes: {self.volume_ids}'
         )
 
-        download_handler = DownloadHandler()
-        ws = WebSocket()
-        total_items = len(self.volume_ids)
+        return _search_volumes(self.volume_ids, self.identifier)
 
+
+class MassEditorRefreshSearch(MassEditorAction):
+    identifier = 'refresh_search'
+
+    def run(self, **kwargs):
+        LOGGER.info(
+            'Using mass editor, refreshing and searching volumes: %s',
+            self.volume_ids
+        )
+
+        ws = WebSocket()
+        volume_count = len(self.volume_ids)
+        total_items = volume_count * 2
         for item_index, volume_id in enumerate(iter_commit(self.volume_ids)):
             ws.emit(MassEditorStatusEvent(
                 self.identifier,
                 item_index + 1,
                 total_items
             ))
+            refresh_and_scan(volume_id)
 
-            search_results = auto_search(volume_id)
-            download_handler.add_multiple(
-                (result['link'], volume_id, None, False)
-                for result in search_results
-            )
-
-        return
+        return _search_volumes(
+            self.volume_ids,
+            self.identifier,
+            progress_offset=volume_count,
+            total_progress=total_items
+        )
 
 
 class MassEditorConvert(MassEditorAction):
@@ -267,7 +335,7 @@ def run_mass_editor_action(
     action: str,
     volume_ids: List[int],
     **kwargs
-) -> None:
+) -> Any:
     """Run a mass editor action.
 
     Args:
@@ -284,5 +352,4 @@ def run_mass_editor_action(
     else:
         raise InvalidKeyValue('action', action)
 
-    ActionClass(volume_ids).run(**kwargs)
-    return
+    return ActionClass(volume_ids).run(**kwargs)

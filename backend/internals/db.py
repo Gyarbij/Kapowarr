@@ -626,6 +626,32 @@ CREATE TABLE IF NOT EXISTS metadata_response_cache(
     expires_at INTEGER NOT NULL,
     PRIMARY KEY(metadata_source, resource, cache_key)
 );
+CREATE TABLE IF NOT EXISTS release_discovery(
+    provider VARCHAR(30) NOT NULL,
+    record_key TEXT NOT NULL,
+    external_id TEXT,
+    external_url TEXT,
+    publisher TEXT,
+    series_title TEXT NOT NULL,
+    series_year INTEGER,
+    issue_number REAL,
+    issue_year INTEGER,
+    release_date VARCHAR(10),
+    cover_url TEXT,
+    source_updated_at TEXT,
+    available BOOL NOT NULL DEFAULT 0,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY(provider, record_key)
+);
+CREATE TABLE IF NOT EXISTS pending_release_watches(
+    record_key TEXT PRIMARY KEY,
+    volume_id INTEGER NOT NULL,
+    first_seen INTEGER NOT NULL,
+    last_checked INTEGER NOT NULL,
+
+    FOREIGN KEY (volume_id) REFERENCES volumes(id)
+        ON DELETE CASCADE
+);
 """
 
 DB_SCHEMA_INDEXES = """
@@ -639,4 +665,10 @@ CREATE INDEX IF NOT EXISTS publisher_cache_source_name_index
     ON publisher_cache(metadata_source, name);
 CREATE INDEX IF NOT EXISTS metadata_response_cache_expiry_index
     ON metadata_response_cache(metadata_source, resource, expires_at);
+CREATE INDEX IF NOT EXISTS release_discovery_date_index
+    ON release_discovery(release_date, provider);
+CREATE INDEX IF NOT EXISTS release_discovery_title_index
+    ON release_discovery(series_title, issue_number);
+CREATE INDEX IF NOT EXISTS pending_release_watches_volume_index
+    ON pending_release_watches(volume_id);
 """
