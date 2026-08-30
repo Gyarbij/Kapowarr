@@ -17,23 +17,44 @@ from typing import Any, Dict, List, Mapping, Set, Tuple, Union
 
 from typing_extensions import assert_never
 
-from backend.base.custom_exceptions import (InvalidKeyValue, IssueNotFound,
-                                            KeyNotFound, TaskForVolumeRunning,
-                                            VolumeAlreadyAdded,
-                                            VolumeDownloadedFor,
-                                            VolumeNotFound)
-from backend.base.definitions import (BaseEnum, Constants, FileData,
-                                      GeneralFileData, IssueData,
-                                      LibraryFilter, LibrarySorting,
-                                      MonitorScheme, SpecialVersion,
-                                      VolumeData)
-from backend.base.files import (change_basefolder, create_folder,
-                                delete_empty_child_folders,
-                                delete_empty_parent_folders,
-                                delete_file_folder, folder_is_inside_folder,
-                                rename_file)
-from backend.base.helpers import (PortablePool, extract_year_from_date,
-                                  first_of_subarrays, to_number_cv_id)
+from backend.base.custom_exceptions import (
+    InvalidKeyValue,
+    IssueNotFound,
+    KeyNotFound,
+    TaskForVolumeRunning,
+    VolumeAlreadyAdded,
+    VolumeDownloadedFor,
+    VolumeNotFound,
+)
+from backend.base.definitions import (
+    BaseEnum,
+    Constants,
+    FileData,
+    GeneralFileData,
+    IssueData,
+    LibraryDateFilter,
+    LibraryFilter,
+    LibrarySorting,
+    LibraryStatusFilter,
+    MonitorScheme,
+    SpecialVersion,
+    VolumeData,
+)
+from backend.base.files import (
+    change_basefolder,
+    create_folder,
+    delete_empty_child_folders,
+    delete_empty_parent_folders,
+    delete_file_folder,
+    folder_is_inside_folder,
+    rename_file,
+)
+from backend.base.helpers import (
+    PortablePool,
+    extract_year_from_date,
+    first_of_subarrays,
+    to_number_cv_id,
+)
 from backend.base.logging import LOGGER
 from backend.implementations.comicvine import ComicVine
 from backend.implementations.file_matching import scan_files
@@ -42,8 +63,7 @@ from backend.implementations.matching import match_title
 from backend.implementations.root_folders import RootFolders
 from backend.internals.db import commit, get_db
 from backend.internals.db_models import FilesDB, GeneralFilesDB
-from backend.internals.server import (DownloadedStatusEvent,
-                                      TaskStatusEvent, WebSocket)
+from backend.internals.server import DownloadedStatusEvent, TaskStatusEvent, WebSocket
 from backend.internals.settings import Settings
 
 # autopep8: off
@@ -54,6 +74,30 @@ remove_link_regex = compile(r'<a[^>]*>.*?</a>', IGNORECASE)
 omnibus_regex = compile(r'\bomnibus\b', IGNORECASE)
 os_regex = compile(r'(?<!preceding\s)\bone[\- ]?shot\b(?!\scollections?)', IGNORECASE)
 hc_regex = compile(r'(?<!preceding\s)\bhard[\- ]?cover\b(?!\scollections?)', IGNORECASE)
+tpb_regex = compile(
+    r'\b(?:'
+    r'(?:epic|complete|ultimate|definitive)\s+collection'
+    r'|collected\s+(?:edition|volume)'
+    r'|complete\s+edition'
+    r'|compendium'
+    r'|trade\s+paper\s*back'
+    r'|showcase\s+presents'
+    r')\b',
+    IGNORECASE
+)
+hc_edition_regex = compile(
+    r'\b(?:'
+    r'library\s+edition'
+    r'|deluxe\s+edition'
+    r"|artist'?s?\s+edition"
+    r'|gallery\s+edition'
+    r'|absolute\s+edition'
+    r'|masterworks?'
+    r'|archives'
+    r'|(?:premiere|oversized)\s+(?:hc|hard[\s\-]?cover|classic)'
+    r')\b',
+    IGNORECASE
+)
 vol_regex = compile(r'^v(?:ol(?:ume)?)?\.?\s(?:\d+|(?:(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)[-\s]{0,1})+)(?:\:\s|$)', IGNORECASE)
 # autopep8: on
 
@@ -882,7 +926,9 @@ class Library:
     def _get_filter_clause(
         filter: Union[LibraryFilter, int, None],
         publisher: Union[str, None] = None,
-        has_description: Union[bool, None] = None
+        has_description: Union[bool, None] = None,
+        status_filter: Union[LibraryStatusFilter, None] = None,
+        date_filter: Union[LibraryDateFilter, None] = None
     ) -> Tuple[str, List[Any]]:
         """Build a SQL WHERE clause for the given library filter.
         Uses EXISTS predicates instead of computed column aliases
@@ -897,17 +943,62 @@ class Library:
         clauses: List[str] = []
         params: List[Any] = []
 
+        legacy_status_filters = {
+            LibraryFilter.WANTED: LibraryStatusFilter.MISSING_MONITORED,
+            LibraryFilter.MISSING_MONITORED:
+                LibraryStatusFilter.MISSING_MONITORED,
+            LibraryFilter.MISSING: LibraryStatusFilter.MISSING,
+            LibraryFilter.MONITORED: LibraryStatusFilter.MONITORED,
+            LibraryFilter.UNMONITORED: LibraryStatusFilter.UNMONITORED,
+            LibraryFilter.COMPLETE: LibraryStatusFilter.COMPLETE,
+            LibraryFilter.DOWNLOADED: LibraryStatusFilter.DOWNLOADED,
+            LibraryFilter.NO_ISSUES: LibraryStatusFilter.NO_ISSUES
+        }
+        legacy_date_filters = {
+            LibraryFilter.RECENTLY_ADDED_7:
+                LibraryDateFilter.RECENTLY_ADDED_7,
+            LibraryFilter.RECENTLY_ADDED_30:
+                LibraryDateFilter.RECENTLY_ADDED_30,
+            LibraryFilter.RECENTLY_ADDED_90:
+                LibraryDateFilter.RECENTLY_ADDED_90,
+            LibraryFilter.RECENTLY_ADDED_180:
+                LibraryDateFilter.RECENTLY_ADDED_180,
+            LibraryFilter.RECENTLY_ADDED_365:
+                LibraryDateFilter.RECENTLY_ADDED_365,
+            LibraryFilter.RECENTLY_RELEASED_7:
+                LibraryDateFilter.RECENTLY_RELEASED_7,
+            LibraryFilter.RECENTLY_RELEASED_30:
+                LibraryDateFilter.RECENTLY_RELEASED_30,
+            LibraryFilter.RECENTLY_RELEASED_90:
+                LibraryDateFilter.RECENTLY_RELEASED_90,
+            LibraryFilter.RECENTLY_RELEASED_180:
+                LibraryDateFilter.RECENTLY_RELEASED_180,
+            LibraryFilter.RECENTLY_RELEASED_365:
+                LibraryDateFilter.RECENTLY_RELEASED_365
+        }
+
         if isinstance(filter, int):
             clauses.append("comicvine_id = ?")
             params.append(filter)
 
-        elif filter == LibraryFilter.MONITORED:
+        elif filter is not None:
+            if status_filter is not None or date_filter is not None:
+                raise InvalidKeyValue('filter', filter.value)
+
+            if filter in legacy_status_filters:
+                status_filter = legacy_status_filters[filter]
+            elif filter in legacy_date_filters:
+                date_filter = legacy_date_filters[filter]
+            elif filter == LibraryFilter.HAS_DESCRIPTION:
+                has_description = True
+
+        if status_filter == LibraryStatusFilter.MONITORED:
             clauses.append("monitored = 1")
 
-        elif filter == LibraryFilter.UNMONITORED:
+        elif status_filter == LibraryStatusFilter.UNMONITORED:
             clauses.append("monitored = 0")
 
-        elif filter in (LibraryFilter.WANTED, LibraryFilter.MISSING_MONITORED):
+        elif status_filter == LibraryStatusFilter.MISSING_MONITORED:
             clauses.append("""EXISTS (
                 SELECT 1 FROM issues i
                 LEFT JOIN issues_files if ON i.id = if.issue_id
@@ -916,7 +1007,7 @@ class Library:
                     AND if.issue_id IS NULL
             )""")
 
-        elif filter == LibraryFilter.MISSING:
+        elif status_filter == LibraryStatusFilter.MISSING:
             clauses.append("""EXISTS (
                 SELECT 1 FROM issues i
                 LEFT JOIN issues_files if ON i.id = if.issue_id
@@ -924,7 +1015,7 @@ class Library:
                     AND if.issue_id IS NULL
             )""")
 
-        elif filter == LibraryFilter.COMPLETE:
+        elif status_filter == LibraryStatusFilter.COMPLETE:
             clauses.append("""NOT EXISTS (
                 SELECT 1 FROM issues i
                 LEFT JOIN issues_files if ON i.id = if.issue_id
@@ -938,61 +1029,67 @@ class Library:
                     AND monitored = 1
             )""")
 
-        elif filter == LibraryFilter.NO_ISSUES:
+        elif status_filter == LibraryStatusFilter.NO_ISSUES:
             clauses.append("""NOT EXISTS (
                 SELECT 1 FROM issues
                 WHERE volume_id = volumes.id
             )""")
 
-        elif filter == LibraryFilter.DOWNLOADED:
+        elif status_filter == LibraryStatusFilter.PARTIALLY_DOWNLOADED:
+            clauses.append("""EXISTS (
+                SELECT 1 FROM issues i
+                INNER JOIN issues_files if ON i.id = if.issue_id
+                WHERE i.volume_id = volumes.id
+            )""")
+            clauses.append("""EXISTS (
+                SELECT 1 FROM issues i
+                LEFT JOIN issues_files if ON i.id = if.issue_id
+                WHERE i.volume_id = volumes.id
+                    AND if.issue_id IS NULL
+            )""")
+
+        elif status_filter == LibraryStatusFilter.DOWNLOADED:
             clauses.append("""EXISTS (
                 SELECT 1 FROM issues i
                 INNER JOIN issues_files if ON i.id = if.issue_id
                 WHERE i.volume_id = volumes.id
             )""")
 
-        elif filter == LibraryFilter.RECENTLY_ADDED_7:
+        recently_added_days = {
+            LibraryDateFilter.RECENTLY_ADDED_7: 7,
+            LibraryDateFilter.RECENTLY_ADDED_30: 30,
+            LibraryDateFilter.RECENTLY_ADDED_90: 90,
+            LibraryDateFilter.RECENTLY_ADDED_180: 180,
+            LibraryDateFilter.RECENTLY_ADDED_365: 365
+        }
+        recently_released_days = {
+            LibraryDateFilter.RECENTLY_RELEASED_7: 7,
+            LibraryDateFilter.RECENTLY_RELEASED_30: 30,
+            LibraryDateFilter.RECENTLY_RELEASED_90: 90,
+            LibraryDateFilter.RECENTLY_RELEASED_180: 180,
+            LibraryDateFilter.RECENTLY_RELEASED_365: 365
+        }
+        if (
+            date_filter is not None
+            and date_filter in recently_added_days
+        ):
+            days = recently_added_days[date_filter]
             clauses.append("created_at >= ?")
-            params.append(round(time()) - 7 * 24 * 60 * 60)
+            params.append(round(time()) - days * 24 * 60 * 60)
 
-        elif filter == LibraryFilter.RECENTLY_ADDED_30:
-            clauses.append("created_at >= ?")
-            params.append(round(time()) - 30 * 24 * 60 * 60)
-
-        elif filter == LibraryFilter.RECENTLY_ADDED_90:
-            clauses.append("created_at >= ?")
-            params.append(round(time()) - 90 * 24 * 60 * 60)
-
-        elif filter == LibraryFilter.RECENTLY_RELEASED_7:
+        elif (
+            date_filter is not None
+            and date_filter in recently_released_days
+        ):
+            days = recently_released_days[date_filter]
             clauses.append("""EXISTS (
                 SELECT 1 FROM issues
                 WHERE volume_id = volumes.id
                     AND date IS NOT NULL
                     AND date != ''
-                    AND date(date) >= date('now', '-7 days')
+                    AND date(date) >= date('now', ?)
             )""")
-
-        elif filter == LibraryFilter.RECENTLY_RELEASED_30:
-            clauses.append("""EXISTS (
-                SELECT 1 FROM issues
-                WHERE volume_id = volumes.id
-                    AND date IS NOT NULL
-                    AND date != ''
-                    AND date(date) >= date('now', '-30 days')
-            )""")
-
-        elif filter == LibraryFilter.RECENTLY_RELEASED_90:
-            clauses.append("""EXISTS (
-                SELECT 1 FROM issues
-                WHERE volume_id = volumes.id
-                    AND date IS NOT NULL
-                    AND date != ''
-                    AND date(date) >= date('now', '-90 days')
-            )""")
-
-        elif filter == LibraryFilter.HAS_DESCRIPTION:
-            clauses.append("description IS NOT NULL")
-            clauses.append("TRIM(description) != ''")
+            params.append(f'-{days} days')
 
         if publisher:
             clauses.append("publisher = ?")
@@ -1016,7 +1113,9 @@ class Library:
         filter: Union[LibraryFilter, int, None] = None,
         query: str = '',
         publisher: Union[str, None] = None,
-        has_description: Union[bool, None] = None
+        has_description: Union[bool, None] = None,
+        status_filter: Union[LibraryStatusFilter, None] = None,
+        date_filter: Union[LibraryDateFilter, None] = None
     ) -> int:
         """Get the total number of volumes matching the filter and query.
         Uses an efficient COUNT query without fetching full data.
@@ -1031,7 +1130,9 @@ class Library:
         sql_filter, params = cls._get_filter_clause(
             filter,
             publisher=publisher,
-            has_description=has_description
+            has_description=has_description,
+            status_filter=status_filter,
+            date_filter=date_filter
         )
 
         if query:
@@ -1059,7 +1160,9 @@ class Library:
         limit: int = 0,
         minimal: bool = False,
         publisher: Union[str, None] = None,
-        has_description: Union[bool, None] = None
+        has_description: Union[bool, None] = None,
+        status_filter: Union[LibraryStatusFilter, None] = None,
+        date_filter: Union[LibraryDateFilter, None] = None
     ) -> List[Dict[str, Any]]:
         """Get all the volumes in the library.
 
@@ -1087,7 +1190,9 @@ class Library:
         sql_filter, filter_params = cls._get_filter_clause(
             filter,
             publisher=publisher,
-            has_description=has_description
+            has_description=has_description,
+            status_filter=status_filter,
+            date_filter=date_filter
         )
 
         pagination = ''
@@ -1155,7 +1260,9 @@ class Library:
         limit: int = 0,
         minimal: bool = False,
         publisher: Union[str, None] = None,
-        has_description: Union[bool, None] = None
+        has_description: Union[bool, None] = None,
+        status_filter: Union[LibraryStatusFilter, None] = None,
+        date_filter: Union[LibraryDateFilter, None] = None
     ) -> List[Dict[str, Any]]:
         """Search in the library with a query.
 
@@ -1191,7 +1298,9 @@ class Library:
                     limit=limit,
                     minimal=minimal,
                     publisher=publisher,
-                    has_description=has_description
+                    has_description=has_description,
+                    status_filter=status_filter,
+                    date_filter=date_filter
                 )
 
             except ValueError:
@@ -1205,7 +1314,9 @@ class Library:
                 filter,
                 minimal=minimal,
                 publisher=publisher,
-                has_description=has_description
+                has_description=has_description,
+                status_filter=status_filter,
+                date_filter=date_filter
             )
             matched = [
                 v
@@ -1229,7 +1340,9 @@ class Library:
         query: str,
         filter: Union[LibraryFilter, None] = None,
         publisher: Union[str, None] = None,
-        has_description: Union[bool, None] = None
+        has_description: Union[bool, None] = None,
+        status_filter: Union[LibraryStatusFilter, None] = None,
+        date_filter: Union[LibraryDateFilter, None] = None
     ) -> int:
         """Count search results without fetching full data.
 
@@ -1246,7 +1359,9 @@ class Library:
                 return cls.get_volume_count(
                     cv_id,
                     publisher=publisher,
-                    has_description=has_description
+                    has_description=has_description,
+                    status_filter=status_filter,
+                    date_filter=date_filter
                 )
             except ValueError:
                 return 0
@@ -1256,7 +1371,9 @@ class Library:
         sql_filter, params = cls._get_filter_clause(
             filter,
             publisher=publisher,
-            has_description=has_description
+            has_description=has_description,
+            status_filter=status_filter,
+            date_filter=date_filter
         )
         titles = get_db().execute(
             f"SELECT title FROM volumes {sql_filter};",
@@ -1586,10 +1703,19 @@ def determine_special_version(volume_id: int) -> SpecialVersion:
     ):
         return SpecialVersion.VOLUME_AS_ISSUE
 
-    if one_issue:
-        if omnibus_regex.search(volume_data.title):
-            return SpecialVersion.OMNIBUS
+    # Title-based format detection (applies regardless of issue count).
+    # Check order: Omnibus > HC editions > TPB collections
+    # (most specific format to broadest catch).
+    if omnibus_regex.search(volume_data.title):
+        return SpecialVersion.OMNIBUS
 
+    if hc_edition_regex.search(volume_data.title):
+        return SpecialVersion.HARD_COVER
+
+    if tpb_regex.search(volume_data.title):
+        return SpecialVersion.TPB
+
+    if one_issue:
         if os_regex.search(volume_data.title):
             return SpecialVersion.ONE_SHOT
 
@@ -1624,8 +1750,14 @@ def determine_special_version(volume_id: int) -> SpecialVersion:
         if os_regex.search(first_sentence):
             return SpecialVersion.ONE_SHOT
 
-        if hc_regex.search(first_sentence):
+        if (
+            hc_regex.search(first_sentence)
+            or hc_edition_regex.search(first_sentence)
+        ):
             return SpecialVersion.HARD_COVER
+
+        if tpb_regex.search(first_sentence):
+            return SpecialVersion.TPB
 
     if one_issue and issues[0].date:
         thirty_plus_days_ago = (
@@ -1715,7 +1847,7 @@ def refresh_and_scan(
             LEFT JOIN issues i
             ON v.id = i.volume_id
             WHERE v.last_cv_fetch <= ?
-            GROUP BY i.volume_id;
+            GROUP BY v.id;
             """,
             (one_day_ago.timestamp(),)
         ))
@@ -1789,11 +1921,12 @@ def refresh_and_scan(
             calculated_issue_number,
             title,
             date,
+            store_date,
             description,
             monitored
         ) VALUES (
             :volume_id, :comicvine_id, :issue_number, :calculated_issue_number,
-            :title, :date, :description, :monitored
+            :title, :date, :store_date, :description, :monitored
         )
         ON CONFLICT(comicvine_id) DO
         UPDATE
@@ -1802,6 +1935,7 @@ def refresh_and_scan(
             calculated_issue_number = :calculated_issue_number,
             title = :title,
             date = :date,
+            store_date = :store_date,
             description = :description;
         """,
         ({
@@ -1811,6 +1945,7 @@ def refresh_and_scan(
             "calculated_issue_number": isd["calculated_issue_number"] or 0.0,
             "title": isd["title"],
             "date": isd["date"],
+            "store_date": isd.get("store_date"),
             "description": isd["description"],
             "monitored": cv_to_id_fetch[isd["volume_id"]][0] in monitor_issues_volume_ids
         }

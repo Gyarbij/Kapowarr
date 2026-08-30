@@ -4,11 +4,18 @@ from time import time
 from typing import List, Union
 
 from backend.base.custom_exceptions import BlocklistEntryNotFound
-from backend.base.definitions import (BlocklistEntry, BlocklistReason,
-                                      BlocklistReasonID, DownloadSource,
-                                      GCDownloadSource)
+from backend.base.definitions import (
+    BlocklistEntry,
+    BlocklistReason,
+    BlocklistReasonID,
+    DownloadSource,
+    GCDownloadSource,
+)
 from backend.base.logging import LOGGER
 from backend.internals.db import get_db
+
+AUTOMATIC_BLOCKLIST_COOLDOWN = 24 * 60 * 60
+AUTOMATIC_PAGE_FAILURE_COOLDOWN = 5 * 60
 
 
 # region Get
@@ -87,28 +94,54 @@ def get_blocklist_entry(id: int) -> BlocklistEntry:
 
 
 # region Contains and Add
-def blocklist_contains(link: str) -> Union[int, None]:
-    """Check if a link is in the blocklist.
-
-    Args:
-        link (str): The link to check for.
-
-    Returns:
-        Union[int, None]: The ID of the blocklist entry, if found.
-            Otherwise `None`.
-    """
-    result = get_db().execute("""
-        SELECT id
+def _get_blocklist_entry_for_link(link: str):
+    return get_db().execute("""
+        SELECT id, reason, added_at, download_link
         FROM blocklist
         WHERE download_link = :link
             OR (web_link = :link AND download_link IS NULL)
+        ORDER BY id DESC
         LIMIT 1;
         """,
         {
             "link": link
         }
-    ).exists()
-    return result
+    ).fetchone()
+
+
+def _blocklist_entry_is_active(entry) -> bool:
+    if entry['reason'] == BlocklistReasonID.ADDED_BY_USER.value:
+        return True
+
+    cooldown = AUTOMATIC_BLOCKLIST_COOLDOWN
+    if (
+        entry['reason'] == BlocklistReasonID.LINK_BROKEN.value
+        and entry['download_link'] is None
+    ):
+        cooldown = AUTOMATIC_PAGE_FAILURE_COOLDOWN
+
+    return (
+        entry['added_at'] + cooldown
+        > round(time())
+    )
+
+
+def blocklist_contains(link: str) -> Union[int, None]:
+    """Check if a link is in the active blocklist.
+
+    Args:
+        link (str): The link to check for.
+
+    Returns:
+        Union[int, None]: The ID of the active blocklist entry, if found.
+            Otherwise `None`.
+    """
+    entry = _get_blocklist_entry_for_link(link)
+
+    if entry and _blocklist_entry_is_active(entry):
+        return entry['id']
+
+    return None
 
 
 def add_to_blocklist(
@@ -158,10 +191,19 @@ def add_to_blocklist(
     if not blocked_link:
         raise ValueError("No page link or download link supplied")
 
-    # Stop if it's already added
-    id = blocklist_contains(blocked_link)
-    if id:
-        return get_blocklist_entry(id)
+    existing_entry = _get_blocklist_entry_for_link(blocked_link)
+    user_upgrade = (
+        existing_entry
+        and reason == BlocklistReason.ADDED_BY_USER
+        and existing_entry['reason']
+            != BlocklistReasonID.ADDED_BY_USER.value
+    )
+    if (
+        existing_entry
+        and _blocklist_entry_is_active(existing_entry)
+        and not user_upgrade
+    ):
+        return get_blocklist_entry(existing_entry['id'])
 
     # Add to database
     LOGGER.info(
@@ -170,37 +212,78 @@ def add_to_blocklist(
 
     reason_id = BlocklistReasonID[reason.name].value
     source_value = source.value if source is not None else None
-    id = get_db().execute("""
-        INSERT INTO blocklist(
-            volume_id, issue_id,
-            web_link, web_title, web_sub_title,
-            download_link, source,
-            reason, added_at
-        )
-        VALUES (
-            :volume_id, :issue_id,
-            :web_link, :web_title, :web_sub_title,
-            :download_link, :source,
-            :reason, :added_at
-        );
-        """,
-        {
-            "volume_id": volume_id,
-            "issue_id": issue_id,
-            "web_link": web_link,
-            "web_title": web_title,
-            "web_sub_title": web_sub_title,
-            "download_link": download_link,
-            "source": source_value,
-            "reason": reason_id,
-            "added_at": round(time())
-        }
-    ).lastrowid
+    values = {
+        "volume_id": volume_id,
+        "issue_id": issue_id,
+        "web_link": web_link,
+        "web_title": web_title,
+        "web_sub_title": web_sub_title,
+        "download_link": download_link,
+        "source": source_value,
+        "reason": reason_id,
+        "added_at": round(time())
+    }
 
-    return get_blocklist_entry(id)
+    if existing_entry:
+        entry_id = existing_entry['id']
+        get_db().execute("""
+            UPDATE blocklist
+            SET volume_id = :volume_id,
+                issue_id = :issue_id,
+                web_link = :web_link,
+                web_title = :web_title,
+                web_sub_title = :web_sub_title,
+                download_link = :download_link,
+                source = :source,
+                reason = :reason,
+                added_at = :added_at
+            WHERE id = :id;
+            """,
+            {
+                **values,
+                "id": entry_id
+            }
+        )
+    else:
+        entry_id = get_db().execute("""
+            INSERT INTO blocklist(
+                volume_id, issue_id,
+                web_link, web_title, web_sub_title,
+                download_link, source,
+                reason, added_at
+            )
+            VALUES (
+                :volume_id, :issue_id,
+                :web_link, :web_title, :web_sub_title,
+                :download_link, :source,
+                :reason, :added_at
+            );
+            """,
+            values
+        ).lastrowid
+
+    return get_blocklist_entry(entry_id)
 
 
 # region Delete
+def clear_automatic_blocklist(link: str) -> None:
+    """Remove transient automatic blocks after a link succeeds."""
+    get_db().execute("""
+        DELETE FROM blocklist
+        WHERE reason != :user_reason
+            AND (
+                download_link = :link
+                OR (web_link = :link AND download_link IS NULL)
+            );
+        """,
+        {
+            'link': link,
+            'user_reason': BlocklistReasonID.ADDED_BY_USER.value
+        }
+    )
+    return
+
+
 def delete_blocklist() -> None:
     """Delete all blocklist entries"""
     LOGGER.info('Deleting blocklist')

@@ -2,25 +2,55 @@
 
 from dataclasses import _MISSING_TYPE, asdict, dataclass, field
 from functools import lru_cache
-from grp import getgrgid, getgrnam
+
+try:
+    from grp import getgrgid, getgrnam
+except ImportError:
+    getgrgid = None
+    getgrnam = None
+
 from logging import INFO
 from os import urandom
 from os.path import abspath, isdir, join, sep
 from secrets import token_bytes
 from typing import Any, Dict, Mapping
 
-from backend.base.custom_exceptions import (FolderNotFound, InvalidKeyValue,
-                                            InvalidSettingModification,
-                                            KeyNotFound)
-from backend.base.definitions import (BaseEnum, Constants, DateType, FileDate,
-                                      GCDownloadSource, SeedingHandling)
-from backend.base.files import (are_folders_colliding, folder_path,
-                                uppercase_drive_letter)
-from backend.base.helpers import (CommaList, Singleton,
-                                  can_run_64bit_executable, force_suffix,
-                                  get_os_type, get_python_version,
-                                  get_version_from_pyproject, hash_credential,
-                                  normalise_base_url)
+from backend.base.custom_exceptions import (
+    ClientNotWorking,
+    CredentialInvalid,
+    FolderNotFound,
+    InvalidKeyValue,
+    InvalidSettingModification,
+    KeyNotFound,
+)
+from backend.base.definitions import (
+    BaseEnum,
+    Constants,
+    DateType,
+    FileDate,
+    GCDownloadSource,
+    OSType,
+    ProxyType,
+    SeedingHandling,
+)
+from backend.base.files import (
+    are_folders_colliding,
+    folder_path,
+    uppercase_drive_letter,
+)
+from backend.base.helpers import (
+    CommaList,
+    Singleton,
+    build_proxy_url,
+    can_run_64bit_executable,
+    force_suffix,
+    get_os_type,
+    get_python_version,
+    get_version_from_pyproject,
+    hash_credential,
+    normalise_base_url,
+    test_proxy_url,
+)
 from backend.base.logging import LOGGER, set_log_level
 from backend.internals.db import DBConnection, commit, get_db
 from backend.internals.db_migration import DatabaseMigrationHandler
@@ -63,12 +93,24 @@ class PublicSettingsValues:
     auth_password: str = ''
 
     comicvine_api_key: str = ''
+    metron_username: str = ''
+    metron_password: str = ''
+    metadata_source: str = 'comicvine'  # comicvine or metron
     api_key: str = ''
     flaresolverr_base_url: str = ''
 
     host: str = '0.0.0.0'
     port: int = 5656
     url_base: str = ''
+
+    proxy_type: ProxyType = ProxyType.NONE
+    proxy_host: str = ''
+    proxy_port: int = 8080
+    proxy_username: str = ''
+    proxy_password: str = ''
+    proxy_ignored_addresses: CommaList = field(
+        default_factory=lambda: CommaList(['localhost', '127.0.0.1'])
+    )
 
     rename_downloaded_files: bool = True
     replace_illegal_characters: bool = True
@@ -127,7 +169,7 @@ class PublicSettingsValues:
             return result
 
         for k, v in result.items():
-            if k in ("auth_username", "auth_password") and v:
+            if k in ("auth_username", "auth_password", "proxy_password") and v:
                 result[k] = Constants.CREDENTIAL_REPLACEMENT
 
             if isinstance(v, BaseEnum):
@@ -151,7 +193,9 @@ task_intervals = {
     # If there are tasks that should be run at the same time,
     # but per se after each other, put them in that order in the dict.
     'update_all': 3600, # every hour
-    'search_all': 86400 # every day
+    'search_all': 86400, # every day
+    'refresh_release_cache': 3600, # every hour
+    'refresh_release_discovery': 3600 # every hour
 }
 
 
@@ -251,8 +295,7 @@ class Settings(metaclass=Singleton):
             InvalidSettingModification: Key can not be modified this way.
             FolderNotFound: Folder not found.
         """
-        from backend.implementations.naming import (NAMING_MAPPING,
-                                                    check_mock_filename)
+        from backend.implementations.naming import NAMING_MAPPING, check_mock_filename
 
         formatted_data = {}
         for key, value in data.items():
@@ -267,6 +310,9 @@ class Settings(metaclass=Singleton):
                 key: formatted_data.get(key)
                 for key in NAMING_MAPPING
             })
+
+        # Check whether setting combinations are valid
+        self.__validate_settings(formatted_data)
 
         old_settings = self.get_settings()
 
@@ -388,6 +434,9 @@ class Settings(metaclass=Singleton):
 
         # Convert type to special type
         if key_data.type is CommaList and isinstance(value, list):
+            if not all(isinstance(e, str) for e in value):
+                raise InvalidKeyValue(key, value)
+
             # Convert list to CommaList
             value = CommaList(value)
 
@@ -425,12 +474,16 @@ class Settings(metaclass=Singleton):
                     value
                 )
 
-        elif key == 'port' and not 0 < value <= 65_535:
+        elif key in ('port', 'proxy_port') and not 0 < value <= 65_535:
             raise InvalidKeyValue(key, value)
 
         elif key == 'url_base':
             if value:
                 converted_value = ('/' + value.lstrip('/')).rstrip('/')
+
+        elif key == 'proxy_password':
+            if value == Constants.CREDENTIAL_REPLACEMENT:
+                converted_value = self.sv.proxy_password
 
         elif key == 'comicvine_api_key':
             from backend.implementations.comicvine import ComicVine
@@ -467,6 +520,9 @@ class Settings(metaclass=Singleton):
             raise InvalidKeyValue(key, value)
 
         elif key == 'chmod_folder':
+            if System.os_type == OSType.WINDOWS and value:
+                raise InvalidKeyValue(key, value)
+
             if value.startswith('0'):
                 converted_value = value[1:]
 
@@ -489,6 +545,13 @@ class Settings(metaclass=Singleton):
             # We can't change existing group to a group that the running user
             # isn't a part of. If that's needed, we need to be root.
             if value:
+                if not (
+                    System.os_type != OSType.WINDOWS
+                    and getgrgid is not None # type: ignore
+                    and getgrnam is not None
+                ):
+                    raise InvalidKeyValue(key, value)
+
                 try:
                     getgrgid(int(value))
                 except (TypeError, ValueError, KeyError):
@@ -532,7 +595,7 @@ class Settings(metaclass=Singleton):
                 raise InvalidKeyValue(key, value)
 
         elif key == 'theme':
-            if value not in ('light', 'dark'):
+            if value not in ('light', 'dark', 'system'):
                 raise InvalidKeyValue(key, value)
 
         elif key == 'flaresolverr_base_url':
@@ -549,8 +612,7 @@ class Settings(metaclass=Singleton):
                 raise InvalidKeyValue(key, value)
 
         else:
-            from backend.implementations.naming import (NAMING_MAPPING,
-                                                        check_format)
+            from backend.implementations.naming import NAMING_MAPPING, check_format
             if key in NAMING_MAPPING:
                 # Check naming formats
                 converted_value = value.strip().strip(sep)
@@ -558,3 +620,55 @@ class Settings(metaclass=Singleton):
                     raise InvalidKeyValue(key, value)
 
         return converted_value
+
+    def __validate_settings(self, formatted_data: Mapping[str, Any]) -> None:
+        """Validate a combination of setting values, NOT individual setting
+        values. E.g. NOT validating individual proxy fields, but checking that
+        there is a working connection based on all proxy fields together.
+
+        Args:
+            formatted_data (Mapping[str, Any]): The supplied changes to the
+                settings, after having their fields validated and formatted
+                by `__format_value()`. These values are overlapped over the
+                existing values.
+
+        Raises:
+            InvalidKeyValue: Value of the key is not allowed.
+        """
+        settings_after_update = SettingsValues(**{
+            **self.get_settings().todict(),
+            **formatted_data
+        })
+
+        if settings_after_update.proxy_type != ProxyType.NONE:
+            if not settings_after_update.proxy_host:
+                raise InvalidKeyValue(
+                    'proxy_host', settings_after_update.proxy_host
+                )
+
+            # Check whether proxy works
+            proxy_url = build_proxy_url(
+                settings_after_update.proxy_type,
+                settings_after_update.proxy_host,
+                settings_after_update.proxy_port,
+                settings_after_update.proxy_username,
+                settings_after_update.proxy_password,
+            )
+            if proxy_url:
+                try:
+                    test_proxy_url(
+                        proxy_url,
+                        settings_after_update.proxy_ignored_addresses
+                    )
+
+                except ClientNotWorking:
+                    raise InvalidKeyValue(
+                        'proxy_host', settings_after_update.proxy_host
+                    )
+
+                except CredentialInvalid:
+                    raise InvalidKeyValue(
+                        'proxy_username', settings_after_update.proxy_username
+                    )
+
+        return

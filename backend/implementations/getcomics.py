@@ -10,36 +10,50 @@ from hashlib import sha1
 from re import IGNORECASE, compile
 from typing import Callable, List, Tuple, Type, Union
 
-from aiohttp import ClientError
+from aiohttp import ClientError, ClientResponseError
 from bencoding import bencode
 from bs4 import BeautifulSoup, Tag
 
-from backend.base.custom_exceptions import (DownloadLimitReached,
-                                            EnqueuingDownloadFailure,
-                                            IssueNotFound, LinkBroken)
-from backend.base.definitions import (GC_DOWNLOAD_SOURCE_TERMS,
-                                      BlocklistReason, Constants, Download,
-                                      DownloadGroup,
-                                      EnqueuingDownloadFailureReason,
-                                      GCDownloadSource, SearchResultData,
-                                      SpecialVersion)
-from backend.base.file_extraction import (extract_filename_data,
-                                          refine_special_version)
-from backend.base.helpers import (AsyncSession, check_overlapping_issues,
-                                  fix_year, force_range,
-                                  get_torrent_info, normalise_year)
+from backend.base.custom_exceptions import (
+    DownloadLimitReached,
+    EnqueuingDownloadFailure,
+    IssueNotFound,
+    LinkBroken,
+)
+from backend.base.definitions import (
+    GC_DOWNLOAD_SOURCE_TERMS,
+    BlocklistReason,
+    Constants,
+    Download,
+    DownloadGroup,
+    EnqueuingDownloadFailureReason,
+    GCDownloadSource,
+    SearchResultData,
+    SpecialVersion,
+)
+from backend.base.file_extraction import extract_filename_data, refine_special_version
+from backend.base.helpers import (
+    AsyncSession,
+    check_overlapping_issues,
+    first_of_range,
+    fix_year,
+    force_range,
+    get_torrent_info,
+    normalise_year,
+)
 from backend.base.logging import LOGGER
-from backend.implementations.blocklist import (add_to_blocklist,
-                                               blocklist_contains)
-from backend.implementations.download_clients import (DirectDownload,
-                                                      MediaFireDownload,
-                                                      MediaFireFolderDownload,
-                                                      MegaDownload,
-                                                      MegaFolderDownload,
-                                                      PixelDrainDownload,
-                                                      PixelDrainFolderDownload,
-                                                      TorrentDownload,
-                                                      WeTransferDownload)
+from backend.implementations.blocklist import add_to_blocklist, blocklist_contains
+from backend.implementations.download_clients import (
+    DirectDownload,
+    MediaFireDownload,
+    MediaFireFolderDownload,
+    MegaDownload,
+    MegaFolderDownload,
+    PixelDrainDownload,
+    PixelDrainFolderDownload,
+    TorrentDownload,
+    WeTransferDownload,
+)
 from backend.implementations.external_clients import ExternalClients
 from backend.implementations.matching import download_group_filter
 from backend.implementations.volumes import Volume
@@ -69,11 +83,13 @@ def _get_max_page(
     if not page_links:
         return 1
 
-    return int(
-        page_links[-1]
-        .get_text(strip=True)
-        .replace(',', '')
-        .replace('.', '')
+    page_numbers = (
+        link.get_text(strip=True).replace(',', '').replace('.', '')
+        for link in page_links
+    )
+    return max(
+        (int(page) for page in page_numbers if page.isdecimal()),
+        default=1
     )
 
 
@@ -96,9 +112,11 @@ def _get_articles(
         if not title_el:
             continue
 
-        link = force_range(
-            title_el.find('a')["href"] or ''
-        )[0]
+        anchor = title_el.find('a')
+        if not anchor:
+            continue
+
+        link: str = first_of_range(anchor.get('href') or '')
         title = title_el.get_text(strip=True)
         result.append((link, title))
 
@@ -242,7 +260,7 @@ def __extract_button_links(
                 link_title = group_link.text.strip().lower()
                 if group_link.get('href') is None:
                     continue
-                href = force_range(group_link.get('href') or '')[0]
+                href: str = first_of_range(group_link.get('href') or '')
                 if not href:
                     continue
 
@@ -308,7 +326,7 @@ def __extract_list_links(
             if group_link.get('href') is None:
                 continue
             link_title = group_link.text.strip().lower()
-            href = force_range(group_link.get('href') or '')[0]
+            href: str = first_of_range(group_link.get('href') or '')
             if not href:
                 continue
 
@@ -830,15 +848,39 @@ class GetComicsPage:
         async with AsyncSession() as session:
             try:
                 response = await session.get(self.link)
+                if response.status == 429:
+                    raise EnqueuingDownloadFailure(
+                        EnqueuingDownloadFailureReason.WEBPAGE_RATE_LIMITED
+                    )
                 if not response.ok:
-                    raise ClientError
+                    if response.status in (404, 410):
+                        raise EnqueuingDownloadFailure(
+                            EnqueuingDownloadFailureReason.WEBPAGE_BROKEN
+                        )
+                    raise EnqueuingDownloadFailure(
+                        EnqueuingDownloadFailureReason
+                        .WEBPAGE_TEMPORARILY_UNAVAILABLE
+                    )
 
                 soup = BeautifulSoup(await response.text(), 'html.parser')
 
-            except ClientError:
+            except ClientResponseError as error:
+                if error.status == 429:
+                    reason = (
+                        EnqueuingDownloadFailureReason.WEBPAGE_RATE_LIMITED
+                    )
+                else:
+                    reason = (
+                        EnqueuingDownloadFailureReason
+                        .WEBPAGE_TEMPORARILY_UNAVAILABLE
+                    )
+                raise EnqueuingDownloadFailure(reason) from error
+
+            except ClientError as error:
                 raise EnqueuingDownloadFailure(
-                    EnqueuingDownloadFailureReason.WEBPAGE_BROKEN
-                )
+                    EnqueuingDownloadFailureReason
+                    .WEBPAGE_TEMPORARILY_UNAVAILABLE
+                ) from error
 
         self.title = _get_title(soup)
         self.download_groups = _get_download_groups(soup)

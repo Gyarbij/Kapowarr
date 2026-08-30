@@ -39,6 +39,7 @@ async function fetchAPI(endpoint, api_key, params={}, json_return=true) {
 		if (response.status === 401) {
 			setLocalStorage({api_key: null})
 			window.location.href = `${url_base}/login?redirect=${window.location.pathname}`;
+			return Promise.reject(response);
 		} else {
 			return Promise.reject(response);
 		};
@@ -64,6 +65,7 @@ async function sendAPI(method, endpoint, api_key, params={}, body={}) {
 		if (response.status === 401) {
 			setLocalStorage({api_key: null})
 			window.location.href = `${url_base}/login?redirect=${window.location.pathname}`;
+			return Promise.reject(response);
 		} else {
 			return Promise.reject(response);
 		};
@@ -92,6 +94,11 @@ function mapButtons(id) {
 		task_to_button['search_all'] = {
 			'button': document.querySelector('#searchall-button'),
 			'icon': `${url_base}/static/img/search.svg`,
+			'loading_icon': `${url_base}/static/img/loading.svg`
+		};
+		task_to_button['refresh_search_all'] = {
+			'button': document.querySelector('#refreshsearch-button'),
+			'icon': `${url_base}/static/img/refresh.svg`,
 			'loading_icon': `${url_base}/static/img/loading.svg`
 		};
 		task_to_button['update_all'] = {
@@ -198,7 +205,7 @@ function fillTaskQueue(api_key) {
 		return response.json();
 	})
 	.then(json => {
-		setTaskMessage(json.result[0].message);
+		setTaskMessage(json.result.length ? json.result[0].message : '');
 		json.result.forEach(task => {
 			const task_string = buildTaskString(task);
 			if (task_string in task_to_button)
@@ -221,20 +228,21 @@ function handleTaskAdded(data) {
 };
 
 function handleTaskRemoved(data) {
-	setTaskMessage('');
+	setTaskMessage(data.summary || '');
 
 	const task_string = buildTaskString(data);
 	if (task_string in task_to_button)
 		unspinButton(task_string);
 };
 
-function connectToWebSocket() {
+function connectToWebSocket(api_key) {
 	const socket = io({
 		path: `${url_base}/api/socket.io`,
 		transports: ["polling"],
 		upgrade: false,
 		autoConnect: false,
-		closeOnBeforeunload: true
+		closeOnBeforeunload: true,
+		auth: {'api_key': api_key}
 	});
 	socket.on('connect', () => console.log('Connected to WebSocket'));
 	socket.on('disconnect', () => console.log('Disconnected from WebSocket'));
@@ -288,7 +296,19 @@ const default_values = {
 	'lib_sorting': 'title',
 	'lib_view': 'posters',
 	'lib_filter': '',
-	'theme': 'dark',
+	'lib_status_filter': '',
+	'lib_date_filter': '',
+	'release_type': 'recent',
+	'release_range': '30',
+	'release_sort': 'date-desc',
+	'release_custom_start': '',
+	'release_custom_end': '',
+	'release_hide_in_library': false,
+	'release_provider': '',
+	'release_local_status': '',
+	'publisher_sort': 'major',
+	'publisher_search': '',
+	'theme': 'system',
 	'translated_filter': 'all',
 	'api_key': null,
 	'last_login': 0,
@@ -329,7 +349,10 @@ function getLocalStorage(...keys) {
 };
 
 function setLocalStorage(keys_values) {
-	const storage = JSON.parse(localStorage.getItem('kapowarr'));
+	const storage = {
+		...default_values,
+		...(JSON.parse(localStorage.getItem('kapowarr')) || {})
+	};
 
 	for (const [key, value] of Object.entries(keys_values))
 		storage[key] = value;
@@ -344,8 +367,13 @@ const url_base = document.querySelector('#url_base').dataset.value;
 const volume_id = parseInt(window.location.pathname.split('/').at(-1)) || null;
 mapButtons(volume_id);
 
-usingApiKey()
+setupLocalStorage();
+applyTheme(getLocalStorage('theme')['theme']);
+
+let socket;
+const socketReady = usingApiKey()
 .then(api_key => {
+	if (api_key === null) return null;
 	setTimeout(() => fillTaskQueue(api_key), 200);
 	// Sync theme from server to ensure consistency across devices
 	fetch(`${url_base}/api/settings?api_key=${api_key}`, { priority: 'low' })
@@ -354,19 +382,27 @@ usingApiKey()
 			const serverTheme = json.result.theme;
 			if (serverTheme && serverTheme !== getLocalStorage('theme')['theme']) {
 				setLocalStorage({'theme': serverTheme});
-				if (serverTheme === 'dark')
-					document.querySelector(':root').classList.add('dark-mode');
-				else
-					document.querySelector(':root').classList.remove('dark-mode');
+				applyTheme(serverTheme);
 			}
 		})
 		.catch(() => {});
+	socket = connectToWebSocket(api_key);
+	return socket;
 });
-
-setupLocalStorage();
-if (getLocalStorage('theme')['theme'] === 'dark')
-	document.querySelector(':root').classList.add('dark-mode');
-const socket = connectToWebSocket();
 
 document.querySelector('#toggle-nav').onclick = e =>
 	document.querySelector('#nav-bar').classList.toggle('show-nav');
+
+function applyTheme(value) {
+	if (value === 'dark') {
+		document.querySelector(':root').classList.add('dark-mode');
+	} else if (value === 'light') {
+		document.querySelector(':root').classList.remove('dark-mode');
+	} else if (value === 'system') {
+		const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+		if (prefersDark)
+			document.querySelector(':root').classList.add('dark-mode');
+		else
+			document.querySelector(':root').classList.remove('dark-mode');
+	}
+}

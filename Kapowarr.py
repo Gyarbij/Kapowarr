@@ -10,15 +10,8 @@ from subprocess import Popen
 from sys import argv
 from typing import NoReturn, Union
 
-from backend.base.custom_exceptions import InvalidKeyValue
 from backend.base.definitions import Constants, StartType
-from backend.base.helpers import check_min_python_version, get_python_exe
-from backend.base.logging import LOGGER, setup_logging
-from backend.features.download_queue import DownloadHandler
-from backend.features.tasks import TaskHandler
-from backend.internals.db import set_db_location, setup_db
-from backend.internals.server import Server, StartTypeHandlers
-from backend.internals.settings import Settings
+from backend.base.helpers import get_python_exe
 
 
 def _main(
@@ -69,6 +62,17 @@ def _main(
         NoReturn: Exit code 0 means to shutdown.
         Exit code 131 or higher means to restart with possibly special reasons.
     """
+    from backend.base.custom_exceptions import InvalidKeyValue
+    from backend.base.definitions import ProxyType
+    from backend.base.helpers import (apply_proxy, build_proxy_url,
+                                      check_min_python_version)
+    from backend.base.logging import LOGGER, setup_logging
+    from backend.features.download_queue import DownloadHandler
+    from backend.features.tasks import TaskHandler
+    from backend.internals.db import set_db_location, setup_db
+    from backend.internals.server import Server, StartTypeHandlers
+    from backend.internals.settings import Settings
+
     set_start_method('spawn')
     setup_logging(log_folder, log_file)
     LOGGER.info('Starting up Kapowarr')
@@ -110,6 +114,17 @@ def _main(
                 raise ValueError("Invalid temp downloads folder value")
 
         settings = s.get_settings()
+
+        if settings.proxy_type != ProxyType.NONE:
+            proxy_url = build_proxy_url(
+                settings.proxy_type,
+                settings.proxy_host,
+                settings.proxy_port,
+                settings.proxy_username,
+                settings.proxy_password
+            )
+            if proxy_url:
+                apply_proxy(proxy_url, settings.proxy_ignored_addresses)
 
         download_handler = DownloadHandler()
         download_handler.load_downloads()

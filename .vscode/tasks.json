@@ -4,10 +4,7 @@
         {
             "label": "Format All",
             "type": "shell",
-            "command": "python3 -m isort .; python3 -m autopep8 --in-place -r .",
-            "windows": {
-                "command": "python -m isort .; python -m autopep8 --in-place -r ."
-            },
+            "command": "uv run --no-sync python -m isort . && uv run --no-sync python -m autopep8 --in-place -r .",
             "group": "build",
             "presentation": {
                 "reveal": "silent",

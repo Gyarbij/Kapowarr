@@ -13,17 +13,37 @@ from aiohttp import ContentTypeError
 from aiohttp.client_exceptions import ClientError
 from bs4 import BeautifulSoup, Tag
 
-from backend.base.custom_exceptions import (CVRateLimitReached,
-                                            InvalidComicVineApiKey,
-                                            VolumeNotMatched)
-from backend.base.definitions import (Constants, FilenameData,
-                                      IssueMetadata, T, VolumeMetadata)
-from backend.base.file_extraction import (extract_issue_number,
-                                          extract_volume_number, volume_regex)
-from backend.base.helpers import (AsyncSession, Session, batched, force_range,
-                                  force_suffix, normalise_string,
-                                  normalise_year, to_full_string_cv_id,
-                                  to_string_cv_id)
+from backend.base.custom_exceptions import (
+    CVRateLimitReached,
+    InvalidComicVineApiKey,
+    VolumeNotMatched,
+)
+from backend.base.definitions import (
+    Constants,
+    FilenameData,
+    IssueMetadata,
+    NewReleaseMetadata,
+    PublisherMetadata,
+    T,
+    VolumeMetadata,
+)
+from backend.base.file_extraction import (
+    extract_issue_number,
+    extract_volume_number,
+    volume_regex,
+)
+from backend.base.helpers import (
+    AsyncSession,
+    Session,
+    batched,
+    first_of_range,
+    force_range,
+    force_suffix,
+    normalise_string,
+    normalise_year,
+    to_full_string_cv_id,
+    to_string_cv_id,
+)
 from backend.base.logging import LOGGER
 from backend.implementations.matching import select_best_volume_result_for_file
 from backend.internals.db import get_db
@@ -119,10 +139,12 @@ def _clean_description(description: str, short: bool = False) -> str:
             if not k.startswith('data-')
         }
         link['target'] = '_blank'
-        link['href'] = link.attrs.get('href', '').lstrip('.').lstrip('/')
-        if not link.attrs.get('href', 'http').startswith('http'):
+        href: str = first_of_range(link.attrs.get('href', ''))
+        href = href.lstrip('.').lstrip('/')
+        link['href'] = href
+        if href and not href.startswith('http'):
             link['href'] = (
-                Constants.CV_SITE_URL + '/' + link.attrs.get('href', '')
+                Constants.CV_SITE_URL + '/' + href
             )
 
     result = str(soup)
@@ -163,6 +185,20 @@ class ComicVine:
         'publisher',
         'site_detail_url',
         'start_year'
+    ))
+    new_release_field_list = ','.join((
+        'id',
+        'issue_number',
+        'name',
+        'cover_date',
+        'store_date',
+        'image',
+        'volume'
+    ))
+    publisher_field_list = ','.join((
+        'id',
+        'name',
+        'site_detail_url'
     ))
 
     def __init__(self, comicvine_api_key: Union[str, None] = None) -> None:
@@ -331,6 +367,7 @@ class ComicVine:
             'calculated_issue_number': calculated_issue_number,
             'title': normalise_string(issue_data['name'] or '') or None,
             'date': issue_data[self.date_type] or None,
+            'store_date': issue_data.get('store_date') or None,
             'description': _clean_description(
                 issue_data['description'],
                 short=True
@@ -697,6 +734,244 @@ class ComicVine:
             return []
 
         return self.__format_search_output(results)
+
+    async def __get_paginated_results(
+        self,
+        session: AsyncSession,
+        url_path: str,
+        params: Dict[str, Any],
+        limit: int
+    ) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        offset = 0
+        while len(results) < limit:
+            page_limit = min(100, limit - len(results))
+            try:
+                response = await self.__call_api(
+                    session,
+                    url_path,
+                    {**params, 'limit': page_limit, 'offset': offset}
+                )
+            except CVRateLimitReached:
+                LOGGER.warning(
+                    'ComicVine rate limit reached after %d results',
+                    len(results)
+                )
+                raise
+
+            page = response.get('results', [])
+            if not page:
+                break
+            results.extend(page)
+            offset += len(page)
+            total = int(response.get('number_of_total_results', offset))
+            if offset >= total or len(page) < page_limit:
+                break
+
+        return results
+
+    async def get_new_releases(
+        self,
+        start_date: str,
+        end_date: str,
+        limit: int = 100
+    ) -> List[NewReleaseMetadata]:
+        """Get recently released or upcoming issues within a date range.
+
+        Args:
+            start_date (str): Start of date range (YYYY-MM-DD format).
+            end_date (str): End of date range (YYYY-MM-DD format).
+            limit (int, optional): Maximum number of results.
+                Defaults to 100.
+
+        Raises:
+            CVRateLimitReached: The rate limit for this endpoint has been reached.
+            InvalidComicVineApiKey: The API key is not valid.
+
+        Returns:
+            List[NewReleaseMetadata]: The new releases within the date range.
+        """
+        LOGGER.debug(f'Fetching new releases from {start_date} to {end_date}')
+
+        # Get volumes already in library for marking
+        cursor = get_db()
+        library_volumes: Dict[int, int] = dict(cursor.execute(
+            "SELECT comicvine_id, id FROM volumes;"
+        ))
+
+        releases: List[NewReleaseMetadata] = []
+        async with AsyncSession() as session:
+            try:
+                results = await self.__get_paginated_results(
+                    session,
+                    '/issues',
+                    {
+                        'field_list': self.new_release_field_list,
+                        'filter': f'store_date:{start_date}|{end_date}',
+                        'sort': 'store_date:desc'
+                    },
+                    limit
+                )
+            except CVRateLimitReached:
+                LOGGER.warning('Rate limit reached while fetching new releases')
+                raise
+
+            for issue in results:
+                volume_data = issue.get('volume', {})
+                volume_cv_id = int(volume_data.get('id', 0))
+                issue_number = issue.get('issue_number', '0')
+
+                calc_issue = force_range(extract_issue_number(issue_number))[0]
+                if calc_issue is None:
+                    calc_issue = 0.0
+
+                release: NewReleaseMetadata = {
+                    'issue_cv_id': int(issue['id']),
+                    'volume_cv_id': volume_cv_id,
+                    'volume_title': normalise_string(
+                        volume_data.get('name', 'Unknown')
+                    ),
+                    'issue_number': issue_number.replace('/', '-').strip(),
+                    'calculated_issue_number': calc_issue,
+                    'store_date': issue.get('store_date'),
+                    'cover_date': issue.get('cover_date'),
+                    'cover_url': (issue.get('image') or {}).get('small_url'),
+                    'publisher': None,  # Not available in issue response
+                    'in_library': volume_cv_id in library_volumes,
+                    'volume_id': library_volumes.get(volume_cv_id)
+                }
+                releases.append(release)
+
+        LOGGER.debug(f'Found {len(releases)} new releases')
+        return releases
+
+    async def get_upcoming_releases(
+        self,
+        days_ahead: int = 30
+    ) -> List[NewReleaseMetadata]:
+        """Get upcoming releases for the next N days.
+
+        Args:
+            days_ahead (int, optional): How many days ahead to look.
+                Defaults to 30.
+
+        Returns:
+            List[NewReleaseMetadata]: Upcoming releases.
+        """
+        from datetime import datetime, timedelta
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        future = (datetime.now() + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
+
+        return await self.get_new_releases(today, future)
+
+    async def get_recent_releases(
+        self,
+        days_back: int = 7
+    ) -> List[NewReleaseMetadata]:
+        """Get releases from the past N days.
+
+        Args:
+            days_back (int, optional): How many days back to look.
+                Defaults to 7.
+
+        Returns:
+            List[NewReleaseMetadata]: Recent releases.
+        """
+        from datetime import datetime, timedelta
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        past = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+
+        return await self.get_new_releases(past, today)
+
+    async def get_publishers(
+        self,
+        limit: int = 50
+    ) -> List[PublisherMetadata]:
+        """Get a list of publishers.
+
+        Args:
+            limit (int, optional): Maximum number of results.
+                Defaults to 50.
+
+        Raises:
+            CVRateLimitReached: The rate limit for this endpoint has been reached.
+            InvalidComicVineApiKey: The API key is not valid.
+
+        Returns:
+            List[PublisherMetadata]: The publishers.
+        """
+        LOGGER.debug('Fetching publishers list')
+
+        publishers: List[PublisherMetadata] = []
+        async with AsyncSession() as session:
+            try:
+                results = await self.__get_paginated_results(
+                    session,
+                    '/publishers',
+                    {
+                        'field_list': self.publisher_field_list
+                    },
+                    limit
+                )
+            except CVRateLimitReached:
+                LOGGER.warning('Rate limit reached while fetching publishers')
+                raise
+
+            for pub in results:
+                publisher: PublisherMetadata = {
+                    'comicvine_id': int(pub['id']),
+                    'name': pub['name'],
+                    'site_url': pub['site_detail_url'],
+                    'volume_count': 0  # Not available in list response
+                }
+                publishers.append(publisher)
+
+        LOGGER.debug(f'Found {len(publishers)} publishers')
+        return publishers
+
+    async def search_publisher_volumes(
+        self,
+        publisher_cv_id: int,
+        limit: int = 100
+    ) -> List[VolumeMetadata]:
+        """Get volumes from a specific publisher.
+
+        Args:
+            publisher_cv_id (int): The ComicVine ID of the publisher.
+            limit (int, optional): Maximum number of results.
+                Defaults to 100.
+
+        Raises:
+            CVRateLimitReached: The rate limit for this endpoint has been reached.
+            InvalidComicVineApiKey: The API key is not valid.
+
+        Returns:
+            List[VolumeMetadata]: Volumes from the publisher.
+        """
+        LOGGER.debug(f'Fetching volumes for publisher {publisher_cv_id}')
+
+        async with AsyncSession() as session:
+            try:
+                results = await self.__get_paginated_results(
+                    session,
+                    '/volumes',
+                    {
+                        'field_list': self.search_field_list,
+                        'filter': f'publisher:{publisher_cv_id}',
+                        'sort': 'date_last_updated:desc'
+                    },
+                    limit
+                )
+            except CVRateLimitReached:
+                LOGGER.warning('Rate limit reached while fetching publisher volumes')
+                raise
+
+            if not results:
+                return []
+
+            return self.__format_search_output(results)
 
     async def filenames_to_cvs(
         self,

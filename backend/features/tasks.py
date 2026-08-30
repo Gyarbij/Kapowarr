@@ -13,18 +13,31 @@ from typing import Dict, List, Tuple, Type, Union
 
 from flask import Flask
 
-from backend.base.custom_exceptions import (InvalidComicVineApiKey,
-                                            TaskNotDeletable, TaskNotFound)
+from backend.base.custom_exceptions import (
+    CredentialInvalid,
+    InvalidComicVineApiKey,
+    TaskNotDeletable,
+    TaskNotFound,
+)
 from backend.base.helpers import Singleton, get_subclasses
 from backend.base.logging import LOGGER
 from backend.features.download_queue import DownloadHandler
-from backend.features.search import auto_search
+from backend.features.search import (
+    auto_search,
+    create_search_outcome,
+    format_search_outcome,
+)
 from backend.implementations.conversion import mass_convert
 from backend.implementations.naming import mass_rename
 from backend.implementations.volumes import Volume, refresh_and_scan
 from backend.internals.db import close_db, get_db
-from backend.internals.server import (TaskAddedEvent, TaskEndedEvent,
-                                      TaskStatusEvent, WebSocket)
+from backend.internals.server import (
+    TaskAddedEvent,
+    TaskEndedEvent,
+    TaskStatusEvent,
+    WebSocket,
+)
+from backend.internals.settings import Settings
 
 
 class Task(ABC):
@@ -33,6 +46,8 @@ class Task(ABC):
     action: str
     display_title: str
     category: str
+    search_outcome = None
+    summary: Union[str, None] = None
 
     @property
     @abstractmethod
@@ -101,7 +116,16 @@ class AutoSearchIssue(Task):
         WebSocket().emit(TaskStatusEvent(self.message))
 
         # Get search results and download them
-        results = auto_search(self._volume_id, self._issue_id)
+        self.search_outcome = create_search_outcome()
+        results = auto_search(
+            self._volume_id,
+            self._issue_id,
+            outcome=self.search_outcome
+        )
+        self.search_outcome['selected_links'] = len(results)
+        self.summary = format_search_outcome(self.search_outcome)
+        self.message = self.summary
+        WebSocket().emit(TaskStatusEvent(self.message))
         if results:
             return [
                 (result['link'], self._volume_id, self._issue_id)
@@ -255,7 +279,15 @@ class AutoSearchVolume(Task):
         WebSocket().emit(TaskStatusEvent(self.message))
 
         # Get search results and download them
-        results = auto_search(self._volume_id)
+        self.search_outcome = create_search_outcome()
+        results = auto_search(
+            self._volume_id,
+            outcome=self.search_outcome
+        )
+        self.search_outcome['selected_links'] = len(results)
+        self.summary = format_search_outcome(self.search_outcome)
+        self.message = self.summary
+        WebSocket().emit(TaskStatusEvent(self.message))
         if results:
             return [
                 (result['link'], self._volume_id, None)
@@ -452,7 +484,7 @@ class SearchAll(Task):
     stop = False
     message = ''
     action = 'search_all'
-    display_title = 'Search All'
+    display_title = 'Search Missing'
     category = 'download'
 
     @property
@@ -472,6 +504,7 @@ class SearchAll(Task):
             "SELECT id, title FROM volumes WHERE monitored = 1;"
         )
         downloads: List[Tuple[str, int, Union[int, None]]] = []
+        self.search_outcome = create_search_outcome()
         ws = WebSocket()
         for volume_id, volume_title in cursor:
             if self.stop:
@@ -479,12 +512,182 @@ class SearchAll(Task):
             self.message = f'Searching for {volume_title}'
             ws.emit(TaskStatusEvent(self.message))
             # Get search results and download them
-            results = auto_search(volume_id)
+            results = auto_search(volume_id, outcome=self.search_outcome)
             if results:
                 downloads += [
                     (result['link'], volume_id, None)
                     for result in results
                 ]
+        self.search_outcome['selected_links'] = len(downloads)
+        self.summary = format_search_outcome(self.search_outcome)
+        self.message = self.summary
+        ws.emit(TaskStatusEvent(self.message))
+        return downloads
+
+
+class RefreshAndSearchAll(SearchAll):
+    "Refresh all canonical metadata, then search monitored missing issues"
+
+    action = 'refresh_search_all'
+    display_title = 'Refresh & Search Missing'
+
+    def run(self) -> List[Tuple[str, int, Union[int, None]]]:
+        self.message = 'Refreshing metadata before searching missing issues'
+        WebSocket().emit(TaskStatusEvent(self.message))
+        try:
+            refresh_and_scan(update_websocket=True, allow_skipping=False)
+        except InvalidComicVineApiKey:
+            pass
+
+        return super().run()
+
+
+class RefreshReleaseCache(Task):
+    "Refresh the release cache with new and upcoming comics"
+
+    stop = False
+    message = ''
+    action = 'refresh_release_cache'
+    display_title = 'Refresh Releases'
+    category = ''
+
+    @property
+    def volume_id(self) -> None:
+        return None
+
+    @property
+    def issue_id(self) -> None:
+        return None
+
+    def __init__(self) -> None:
+        return
+
+    def run(self) -> None:
+        from asyncio import run as async_run
+        from datetime import datetime, timedelta
+
+        from backend.implementations.metadata_cache import MetadataCache
+        from backend.implementations.metadata_sources import (
+            MetadataSourceType,
+            get_metadata_source,
+        )
+
+        self.message = 'Refreshing release cache'
+        WebSocket().emit(TaskStatusEvent(self.message))
+
+        source_value = Settings().sv.metadata_source or MetadataSourceType.COMICVINE.value
+        try:
+            source_type = MetadataSourceType(source_value)
+        except ValueError:
+            LOGGER.warning(
+                f'Invalid metadata_source setting "{source_value}", falling back to comicvine'
+            )
+            source_type = MetadataSourceType.COMICVINE
+
+        try:
+            source = get_metadata_source(source_type)
+            cache = MetadataCache(source)
+            self.message = 'Fetching recent releases'
+            WebSocket().emit(TaskStatusEvent(self.message))
+
+            today = datetime.now()
+            past = (today - timedelta(days=30)).strftime('%Y-%m-%d')
+            future = (today + timedelta(days=90)).strftime('%Y-%m-%d')
+
+            releases = async_run(cache.get_releases(
+                past,
+                future,
+                limit=MetadataCache.RELEASE_FETCH_LIMIT
+            ))
+
+            LOGGER.info(f'Refreshed release cache with {len(releases)} releases')
+
+            self.message = 'Fetching publishers'
+            WebSocket().emit(TaskStatusEvent(self.message))
+
+            publishers = async_run(cache.get_publishers(limit=100))
+
+            LOGGER.info(f'Refreshed publisher cache with {len(publishers)} publishers')
+
+        except (CredentialInvalid, InvalidComicVineApiKey):
+            LOGGER.warning(
+                'Invalid metadata credentials, skipping release cache refresh'
+            )
+
+        return
+
+
+class RefreshReleaseDiscovery(Task):
+    "Refresh supplemental releases and promote resolved metadata watches"
+
+    stop = False
+    message = ''
+    action = 'refresh_release_discovery'
+    display_title = 'Refresh Release Discovery'
+    category = 'download'
+
+    @property
+    def volume_id(self) -> None:
+        return None
+
+    @property
+    def issue_id(self) -> None:
+        return None
+
+    def __init__(self) -> None:
+        return
+
+    def run(self) -> List[Tuple[str, int, Union[int, None]]]:
+        from asyncio import run as async_run
+        from datetime import datetime, timedelta
+
+        from backend.implementations.release_discovery import get_release_discovery
+
+        self.message = 'Refreshing supplemental release discovery'
+        WebSocket().emit(TaskStatusEvent(self.message))
+        pending_keys = {
+            row[0]
+            for row in get_db().execute(
+                'SELECT record_key FROM pending_release_watches;'
+            )
+        }
+        today = datetime.now().date()
+        items = async_run(get_release_discovery(
+            (today - timedelta(days=60)).isoformat(),
+            (today + timedelta(days=30)).isoformat()
+        ))
+
+        downloads = []
+        promoted = 0
+        for item in items:
+            if (
+                item['record_key'] not in pending_keys
+                or item['local_status'] != 'missing_monitored'
+                or item['local_volume_id'] is None
+                or item['local_issue_id'] is None
+            ):
+                continue
+            promoted += 1
+            results = auto_search(
+                item['local_volume_id'],
+                item['local_issue_id']
+            )
+            downloads.extend(
+                (
+                    result['link'],
+                    item['local_volume_id'],
+                    item['local_issue_id']
+                )
+                for result in results
+            )
+
+        self.summary = (
+            f'Refreshed {len(items)} discovered releases; '
+            f'{promoted} pending issues gained canonical metadata; '
+            f'{len(downloads)} links selected'
+        )
+        self.message = self.summary
+        WebSocket().emit(TaskStatusEvent(self.message))
         return downloads
 
 
@@ -533,10 +736,41 @@ class TaskHandler(metaclass=Singleton):
 
                 if not task.stop:
                     if task.category == 'download' and result:
-                        DownloadHandler().add_multiple(
-                            (link, volume_id, issue_id, False)
-                            for link, volume_id, issue_id in result
+                        download_handler = DownloadHandler()
+                        queue_args = []
+                        for link, volume_id, issue_id in result:
+                            if (
+                                task.search_outcome is not None
+                                and download_handler.link_in_queue(link)
+                            ):
+                                task.search_outcome[\
+                                    'already_queued_links'] += 1
+                                continue
+                            queue_args.append(
+                                (link, volume_id, issue_id, False)
+                            )
+
+                        queue_results = download_handler.add_multiple(
+                            queue_args
                         )
+                        if task.search_outcome is not None:
+                            for added, failure in queue_results:
+                                task.search_outcome['queued_links'] += len(added)
+                                if not added and failure is None:
+                                    task.search_outcome[\
+                                        'already_queued_links'] += 1
+                                elif failure is not None:
+                                    reason = failure.value
+                                    failures = task.search_outcome[\
+                                        'enqueue_failures']
+                                    failures[reason] = (
+                                        failures.get(reason, 0) + 1
+                                    )
+                            task.summary = format_search_outcome(
+                                task.search_outcome
+                            )
+                            task.message = task.summary
+                            socket.emit(TaskStatusEvent(task.message))
 
                     LOGGER.info(f'Finished task {task.display_title}')
 
@@ -712,9 +946,23 @@ class TaskHandler(metaclass=Singleton):
             dict: The info of the task in the queue.
                 Formatted using `self.__format_entry()`.
         """
+        return self.__format_entry(self.__get_raw_entry(task_id))
+
+    def __get_raw_entry(self, task_id: int) -> dict:
+        """Get the raw entry from the queue based on it's id
+
+        Args:
+            task_id (int): The id of the task to get from the queue
+
+        Raises:
+            TaskNotFound: The id doesn't match with any task in the queue
+
+        Returns:
+            dict: The raw entry of the task in the queue.
+        """
         for entry in self.queue:
             if entry['id'] == task_id:
-                return self.__format_entry(entry)
+                return entry
         raise TaskNotFound(task_id)
 
     def remove(self, task_id: int) -> None:
@@ -729,7 +977,7 @@ class TaskHandler(metaclass=Singleton):
         """
         # Get task and check if id exists
         # Raises TaskNotFound if the id isn't found
-        task = self.get_one(task_id)
+        task = self.__get_raw_entry(task_id)
 
         # Check if task is allowed to be deleted
         if self.queue[0] == task:
@@ -787,7 +1035,7 @@ def get_task_planning() -> List[dict]:
         SELECT
             i.task_name, interval, next_run, run_at AS last_run
         FROM task_intervals i
-        INNER JOIN (
+        LEFT JOIN (
             SELECT
                 task_name,
                 MAX(run_at) AS run_at

@@ -246,8 +246,7 @@ def _migrate_add_custom_folder():
 
 @DatabaseMigrationHandler.register_handler(7)
 def _migrate_add_special_version():
-    from backend.implementations.volumes import (Library,
-                                                 determine_special_version)
+    from backend.implementations.volumes import Library, determine_special_version
 
     cursor = get_db()
     cursor.execute("""
@@ -324,8 +323,7 @@ def _migrate_update_manifest():
 
 @DatabaseMigrationHandler.register_handler(10)
 def _migrate_update_special_version():
-    from backend.implementations.volumes import (Library,
-                                                 determine_special_version)
+    from backend.implementations.volumes import Library, determine_special_version
 
     updates = (
         (
@@ -1205,4 +1203,177 @@ def _migrate_add_volume_indexes_and_created_at():
             ON issues(volume_id, monitored);
     """)
 
+    return
+
+
+@DatabaseMigrationHandler.register_handler(45)
+def _migrate_add_release_cache_and_publisher_tables():
+    """Add tables for caching new releases and publisher data."""
+    cursor = get_db()
+
+    # Create release_cache table for caching new/upcoming releases
+    cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS release_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            issue_cv_id INTEGER NOT NULL UNIQUE,
+            volume_cv_id INTEGER NOT NULL,
+            volume_title TEXT NOT NULL,
+            issue_number TEXT NOT NULL,
+            calculated_issue_number REAL,
+            store_date TEXT,
+            cover_date TEXT,
+            cover_url TEXT,
+            publisher TEXT,
+            fetched_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_release_cache_store_date
+            ON release_cache(store_date);
+        CREATE INDEX IF NOT EXISTS idx_release_cache_fetched_at
+            ON release_cache(fetched_at);
+        CREATE INDEX IF NOT EXISTS idx_release_cache_volume_cv_id
+            ON release_cache(volume_cv_id);
+
+        -- Create publisher_cache table for caching publisher data
+        CREATE TABLE IF NOT EXISTS publisher_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            comicvine_id INTEGER NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            site_url TEXT,
+            volume_count INTEGER DEFAULT 0,
+            fetched_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_publisher_cache_name
+            ON publisher_cache(name);
+        CREATE INDEX IF NOT EXISTS idx_publisher_cache_fetched_at
+            ON publisher_cache(fetched_at);
+    """)
+
+    # Add store_date column to issues table if not exists
+    columns = cursor.execute("PRAGMA table_info(issues);").fetchall()
+    existing_columns = {column[1] for column in columns}
+    if 'store_date' not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE issues ADD COLUMN store_date TEXT;"
+        )
+
+    return
+
+
+@DatabaseMigrationHandler.register_handler(46)
+def _migrate_reconcile_divergent_version_44():
+    _migrate_add_volume_indexes_and_created_at()
+    _migrate_add_release_cache_and_publisher_tables()
+
+    cursor = get_db()
+    for table in ('issues_files', 'volume_files'):
+        columns = cursor.execute(
+            f"PRAGMA table_info({table});"
+        ).fetchall()
+        if 'forced' not in {column[1] for column in columns}:
+            cursor.execute(
+                f"ALTER TABLE {table} ADD COLUMN "
+                "forced BOOL NOT NULL DEFAULT 0;"
+            )
+
+    return
+
+
+@DatabaseMigrationHandler.register_handler(47)
+def _migrate_source_aware_metadata_cache():
+    get_db().executescript("""
+        DROP TABLE IF EXISTS release_cache;
+        DROP TABLE IF EXISTS release_cache_windows;
+        DROP TABLE IF EXISTS publisher_cache;
+        DROP TABLE IF EXISTS metadata_response_cache;
+
+        CREATE TABLE release_cache(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            metadata_source VARCHAR(30) NOT NULL,
+            issue_cv_id INTEGER NOT NULL,
+            volume_cv_id INTEGER NOT NULL,
+            volume_title TEXT NOT NULL,
+            issue_number TEXT NOT NULL,
+            calculated_issue_number REAL,
+            store_date VARCHAR(10),
+            cover_date VARCHAR(10),
+            cover_url TEXT,
+            publisher TEXT,
+            fetched_at INTEGER NOT NULL,
+            UNIQUE(metadata_source, issue_cv_id)
+        );
+        CREATE INDEX release_cache_source_date_index
+            ON release_cache(metadata_source, store_date, cover_date);
+
+        CREATE TABLE release_cache_windows(
+            metadata_source VARCHAR(30) NOT NULL,
+            start_date VARCHAR(10) NOT NULL,
+            end_date VARCHAR(10) NOT NULL,
+            fetched_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            PRIMARY KEY(metadata_source, start_date, end_date)
+        );
+        CREATE INDEX release_cache_windows_expiry_index
+            ON release_cache_windows(metadata_source, expires_at);
+
+        CREATE TABLE publisher_cache(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            metadata_source VARCHAR(30) NOT NULL,
+            comicvine_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            site_url TEXT,
+            volume_count INTEGER DEFAULT 0,
+            fetched_at INTEGER NOT NULL,
+            UNIQUE(metadata_source, comicvine_id)
+        );
+        CREATE INDEX publisher_cache_source_name_index
+            ON publisher_cache(metadata_source, name);
+
+        CREATE TABLE metadata_response_cache(
+            metadata_source VARCHAR(30) NOT NULL,
+            resource VARCHAR(50) NOT NULL,
+            cache_key TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            fetched_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            PRIMARY KEY(metadata_source, resource, cache_key)
+        );
+        CREATE INDEX metadata_response_cache_expiry_index
+            ON metadata_response_cache(
+                metadata_source, resource, expires_at
+            );
+    """)
+
+    return
+
+
+@DatabaseMigrationHandler.register_handler(48)
+def _migrate_add_release_discovery():
+    get_db().executescript("""
+        CREATE TABLE IF NOT EXISTS release_discovery(
+            provider VARCHAR(30) NOT NULL,
+            record_key TEXT NOT NULL,
+            external_id TEXT,
+            external_url TEXT,
+            publisher TEXT,
+            series_title TEXT NOT NULL,
+            series_year INTEGER,
+            issue_number REAL,
+            issue_year INTEGER,
+            release_date VARCHAR(10),
+            cover_url TEXT,
+            source_updated_at TEXT,
+            available BOOL NOT NULL DEFAULT 0,
+            fetched_at INTEGER NOT NULL,
+            PRIMARY KEY(provider, record_key)
+        );
+        CREATE TABLE IF NOT EXISTS pending_release_watches(
+            record_key TEXT PRIMARY KEY,
+            volume_id INTEGER NOT NULL,
+            first_seen INTEGER NOT NULL,
+            last_checked INTEGER NOT NULL,
+
+            FOREIGN KEY (volume_id) REFERENCES volumes(id)
+                ON DELETE CASCADE
+        );
+    """)
     return

@@ -3,8 +3,9 @@
 from io import BytesIO
 from json import dumps
 from typing import Any
+from urllib.parse import urlencode
 
-from flask import Blueprint, redirect, render_template, send_file
+from flask import Blueprint, redirect, render_template, request, send_file
 
 from backend.internals.server import Server
 
@@ -69,6 +70,36 @@ def ui_library_import():
 @ui.route('/volumes/<id>', methods=methods)
 def ui_view_volume(id):
     return render('view_volume.html')
+
+
+@ui.route('/releases', methods=methods)
+def ui_releases():
+    return render('weekly_packs.html')
+
+
+@ui.route('/releases/calendar', methods=methods)
+def ui_releases_calendar():
+    return render('releases.html')
+
+
+@ui.route('/weekly-packs', methods=methods)
+def ui_weekly_packs():
+    allowed_params = {
+        'weeks', 'page', 'publisher', 'local_status', 'query'
+    }
+    query = urlencode([
+        (key, value)
+        for key in request.args
+        if key in allowed_params
+        for value in request.args.getlist(key)
+    ])
+    target = f'{Server.url_base}/releases'
+    return redirect(f'{target}?{query}' if query else target)
+
+
+@ui.route('/publishers', methods=methods)
+def ui_publishers():
+    return render('publishers.html')
 
 
 @ui.route('/activity/queue', methods=methods)

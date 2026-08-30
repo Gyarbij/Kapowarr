@@ -16,6 +16,14 @@ Contributing to Kapowarr consists of 5 steps, listed hereunder.
 
 Once your contribution request has been accepted, you can start your local development. 
 
+Install [uv](https://docs.astral.sh/uv/), then create and sync the development environment from the repository root:
+
+```bash
+uv python install 3.14
+uv venv --python 3.14
+uv pip sync --python .venv/bin/python requirements-dev.txt docs/requirements-docs.txt
+```
+
 ### IDE
 
 It's up to you how you make the changes, but we use Visual Studio Code as the IDE. A workspace settings file is included that takes care of some styling, testing and formatting of the backend code.
@@ -30,26 +38,30 @@ If you do not use VS Code with the mentioned extensions, then below are some com
 
 1. **Mypy**:
 ```bash
-mypy --explicit-package-bases .
+uv run --no-sync python -m mypy --explicit-package-bases .
 ```
 2. **autopep8**:
 ```bash
-autopep8 --recursive --in-place .
+uv run --no-sync python -m autopep8 --recursive --in-place .
 ```
 3. **isort**:
 ```bash
-isort .
+uv run --no-sync python -m isort .
 ```
 4. **unittest**
 ```bash
-python3 -m unittest discover -s ./tests -p '*.py'
+uv run --no-sync python -m unittest discover -s ./tests -p '*.py'
+```
+5. **Performance tests**:
+```bash
+PYTHONPATH="$PWD" uv run --no-sync python -m benchmarks.benchmark_core --fast
 ```
 
 ### Strict rules
 
 There are a few conditions that should always be met:
 
-1. Kapowarr should support Python version 3.8 and higher.
+1. Kapowarr should support Python versions 3.11 through 3.14.
 2. Kapowarr should be compatible with Linux, MacOS, Windows and the Docker container.
 3. The tests should all pass.
 
@@ -65,5 +77,5 @@ Following the styling guide for the backend code is not a strict rule, but effor
 
 ## A few miscellaneous notes
 
-1. Kapowarr does not have many tests. They're not really required if you checked your changes for bugs already. But you are free to add tests for your changes anyway.
+1. Add focused regression tests for behavior changes and run the full suite before opening a pull request.
 2. The function [`backend.base.file_extraction.extract_filename_data`](https://github.com/Casvt/Kapowarr/blob/eadc04d10b32c04d4bbc51d289d10cfa93bc44f6/backend/base/file_extraction.py#L186) and [the regexes defined at the top](https://github.com/Casvt/Kapowarr/blob/development/backend/base/file_extraction.py#L24-L55) that it uses have become a bit of a box of black magic. If the function does not work as expected, it might be best to just inform @Casvt in the contribution request issue and he'll try to fix it.

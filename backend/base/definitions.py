@@ -9,8 +9,21 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from enum import Enum
 from threading import Event, Thread
-from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Mapping,
-                    Sequence, Tuple, TypedDict, TypeVar, Union)
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Sequence,
+    Tuple,
+    TypedDict,
+    TypeVar,
+    Union,
+)
+
+from typing_extensions import NotRequired
 
 if TYPE_CHECKING:
     from backend.base.helpers import AsyncSession
@@ -23,7 +36,7 @@ FileConverter = Callable[[str], List[str]]
 
 # region Constants
 class Constants:
-    MIN_PYTHON_VERSION = (3, 8, 0)
+    MIN_PYTHON_VERSION = (3, 11, 0)
     "The minimum Python version allowed"
 
     SUB_PROCESS_TIMEOUT = 20.0 # seconds
@@ -89,8 +102,10 @@ class Constants:
     BACKOFF_FACTOR_RETRIES = 1
     "Backoff factor for waiting in-between retries"
 
-    STATUS_FORCELIST_RETRIES = (500, 502, 503, 504)
+    STATUS_FORCELIST_RETRIES = (429, 500, 502, 503, 504)
     "The HTTP status codes for which a retry should be done"
+
+    PROXY_TEST_URL = "https://httpbin.org/ip"
 
     CV_SITE_URL = "https://comicvine.gamespot.com"
     "The base URL of ComicVine"
@@ -115,6 +130,9 @@ class Constants:
 
     FS_API_BASE = "/v1"
     "The base endpoint of the FlareSolverr API"
+
+    MAX_CONCURRENT_FS_SESSIONS = 2
+    "The maximum amount of FlareSolverr browser sessions that can concurrently run"
 
     CF_CHALLENGE_HEADER = ("cf-mitigated", "challenge")
     """
@@ -268,6 +286,16 @@ class StartType(BaseEnum):
     "A restart because changes to the hosting settings were made"
 
 
+class ProxyType(BaseEnum):
+    NONE = None
+    "Proxy disabled"
+
+    HTTP = "http"
+    HTTPS = "https"
+    SOCKS5 = "socks5"
+    SOCKS5H = "socks5h"
+
+
 class FileDate(BaseEnum):
     "What to set the date of the issue file to"
 
@@ -389,10 +417,38 @@ class LibraryFilter(BaseEnum):
     RECENTLY_ADDED_7 = "recently_added_7"
     RECENTLY_ADDED_30 = "recently_added_30"
     RECENTLY_ADDED_90 = "recently_added_90"
+    RECENTLY_ADDED_180 = "recently_added_180"
+    RECENTLY_ADDED_365 = "recently_added_365"
     RECENTLY_RELEASED_7 = "recently_released_7"
     RECENTLY_RELEASED_30 = "recently_released_30"
     RECENTLY_RELEASED_90 = "recently_released_90"
+    RECENTLY_RELEASED_180 = "recently_released_180"
+    RECENTLY_RELEASED_365 = "recently_released_365"
     HAS_DESCRIPTION = "has_description"
+
+
+class LibraryStatusFilter(BaseEnum):
+    MISSING_MONITORED = "missing_monitored"
+    MISSING = "missing"
+    MONITORED = "monitored"
+    UNMONITORED = "unmonitored"
+    COMPLETE = "complete"
+    PARTIALLY_DOWNLOADED = "partially_downloaded"
+    DOWNLOADED = "downloaded"
+    NO_ISSUES = "no_issues"
+
+
+class LibraryDateFilter(BaseEnum):
+    RECENTLY_ADDED_7 = "recently_added_7"
+    RECENTLY_ADDED_30 = "recently_added_30"
+    RECENTLY_ADDED_90 = "recently_added_90"
+    RECENTLY_ADDED_180 = "recently_added_180"
+    RECENTLY_ADDED_365 = "recently_added_365"
+    RECENTLY_RELEASED_7 = "recently_released_7"
+    RECENTLY_RELEASED_30 = "recently_released_30"
+    RECENTLY_RELEASED_90 = "recently_released_90"
+    RECENTLY_RELEASED_180 = "recently_released_180"
+    RECENTLY_RELEASED_365 = "recently_released_365"
 
 
 class MonitorScheme(BaseEnum):
@@ -442,7 +498,9 @@ class BrokenClientReason(BaseEnum):
 class EnqueuingDownloadFailureReason(BaseEnum):
     "The reason a download failed to be added to the queue"
 
-    WEBPAGE_BROKEN = "Webpage unavailable"
+    WEBPAGE_BROKEN = "Webpage not found"
+    WEBPAGE_RATE_LIMITED = "GetComics temporarily rate limited the request"
+    WEBPAGE_TEMPORARILY_UNAVAILABLE = "Webpage temporarily unavailable"
     NO_MATCHES = "No links found on webpage that match to volume and are not blocklisted"
     NO_WORKING_LINKS = "All download links found on the webpage are broken"
     ONLY_RATE_LIMITED_LINKS = "All working download links on the webpage are from rate limited services"
@@ -588,9 +646,21 @@ class SearchResultData(FilenameData):
     source: str
 
 
+class SearchResultMatchReason(BaseEnum):
+    BLOCKLISTED = "blocklisted"
+    ANNUAL_CONFLICT = "annual_conflict"
+    TITLE_MISMATCH = "title_mismatch"
+    VOLUME_NUMBER_MISMATCH = "volume_number_mismatch"
+    SPECIAL_VERSION_CONFLICT = "special_version_conflict"
+    YEAR_MISMATCH = "year_mismatch"
+    ISSUE_NUMBER_MISMATCH = "issue_number_mismatch"
+
+
 class SearchResultMatchData(TypedDict):
     match: bool
     match_issue: Union[str, None]
+    match_reason_code: Union[str, None]
+    matched_issue_ids: List[int]
 
 
 class MatchedSearchResultData(
@@ -601,6 +671,19 @@ class MatchedSearchResultData(
     _issue_number: Union[float, Tuple[float, float]]
 
 
+class SearchOutcomeData(TypedDict):
+    volumes_scanned: int
+    volumes_skipped: int
+    open_issues: int
+    candidates_found: int
+    matched_candidates: int
+    selected_links: int
+    queued_links: int
+    already_queued_links: int
+    rejections: Dict[str, int]
+    enqueue_failures: Dict[str, int]
+
+
 class IssueMetadata(TypedDict):
     comicvine_id: int
     volume_id: int
@@ -608,6 +691,7 @@ class IssueMetadata(TypedDict):
     calculated_issue_number: float
     title: Union[str, None]
     date: Union[str, None]
+    store_date: Union[str, None]
     description: str
 
 
@@ -625,7 +709,30 @@ class VolumeMetadata(TypedDict):
     issue_count: int
     translated: bool
     already_added: Union[int, None]
-    issues: Union[List['IssueMetadata'], None]
+    issues: Union[List[IssueMetadata], None]
+
+
+class PublisherMetadata(TypedDict):
+    comicvine_id: int
+    name: str
+    site_url: str
+    volume_count: int
+
+
+class NewReleaseMetadata(TypedDict):
+    """Metadata for a newly released or upcoming issue"""
+    issue_cv_id: int
+    volume_cv_id: int
+    volume_title: str
+    issue_number: str
+    calculated_issue_number: float
+    store_date: Union[str, None]
+    cover_date: Union[str, None]
+    cover_url: Union[str, None]
+    publisher: Union[str, None]
+    in_library: bool
+    metadata_source: NotRequired[str]
+    volume_id: Union[int, None]  # Local volume ID if in library
 
 
 class CVFileMapping(TypedDict):
@@ -658,6 +765,13 @@ class FileData(TypedDict):
 
 class GeneralFileData(FileData):
     file_type: str
+
+
+class FileMatch(TypedDict):
+    filepath: str
+    issue_ids: List[int]
+    general_file: bool
+    forced_match: bool
 
 
 # region Dataclasses
@@ -702,6 +816,9 @@ class BaseNamingKeys:
     year: Union[int, None]
     publisher: Union[str, None]
 
+    def todict(self) -> Dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass
 class VolumeNamingKeys(BaseNamingKeys):
@@ -711,7 +828,7 @@ class VolumeNamingKeys(BaseNamingKeys):
 @dataclass
 class TitlelessIssueNamingKeys(BaseNamingKeys):
     issue_comicvine_id: int
-    issue_number: Union[str, None]
+    issue_number: str
     issue_release_date: Union[str, None]
     issue_release_year: Union[int, None]
 
@@ -730,7 +847,7 @@ class IssueData:
     calculated_issue_number: float
     title: Union[str, None]
     date: Union[str, None]
-    description: Union[str, None]
+    description: str
     monitored: bool
     files: List[FileData]
 
@@ -744,11 +861,11 @@ class VolumeData:
     comicvine_id: int
     title: str
     alt_title: Union[str, None]
-    year: int
-    publisher: str
+    year: Union[int, None]
     volume_number: int
     description: str
     site_url: str
+    publisher: Union[str, None]
     monitored: bool
     monitor_new_issues: bool
     root_folder: int
@@ -779,12 +896,20 @@ class CredentialData:
             self.api_key = self.api_key.strip() or None
         return
 
-    def todict(self) -> Dict[str, Any]:
-        "Note: Will replace password with a string of stars"
+    def todict(self, hide_password: bool = False) -> Dict[str, Any]:
+        """Return a dictionary version of this dataclass.
+
+        Args:
+            hide_password (bool, optional): Replace the password with stars.
+                Defaults to False.
+
+        Returns:
+            Dict[str, Any]: The dictionary.
+        """
         result = asdict(self)
 
         result['source'] = self.source.value
-        if result['password'] is not None:
+        if result['password'] is not None and hide_password:
             result['password'] = Constants.CREDENTIAL_REPLACEMENT
 
         return result
@@ -859,7 +984,7 @@ class MassEditorAction(ABC):
         return
 
     @abstractmethod
-    def run(self, **kwargs: Any) -> None:
+    def run(self, **kwargs: Any) -> Any:
         "Run the mass editor action"
         ...
 

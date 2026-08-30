@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% from "base.html" import icon_button, window, loading_window %}
+{% block title %}Publishers{% endblock %}
+{% block css %}
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/window.css') }}">
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/publishers.css') }}">
+{% endblock %}
+{% block js %}
+	<script src="{{ url_for('static', filename='js/window.js') }}" defer></script>
+	<script src="{{ url_for('static', filename='js/publishers.js') }}" defer></script>
+{% endblock %}
+
+{% block windows %}
+	{{ loading_window("add-loading-window", "Adding volume...") }}
+
+	{% set add_content %}
+		<img src="" id="add-cover" alt="">
+		<form id="add-form">
+			<input type="hidden" id="comicvine-input" value="">
+			<table class="fold-table">
+				<tr>
+					<th><label for="rootfolder-input">Root Folder</label></th>
+					<td>
+						<select id="rootfolder-input"></select>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="volumefolder-input">Volume Folder</label></th>
+					<td>
+						<input type="text" id="volumefolder-input">
+					</td>
+				</tr>
+				<tr>
+					<th><label for="monitor-volume-input">Monitor Volume</label></th>
+					<td>
+						<select id="monitor-volume-input">
+							<option value="true" selected>Yes</option>
+							<option value="false">No</option>
+						</select>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="monitor-issues-input">Monitor New Issues</label></th>
+					<td>
+						<select id="monitor-issues-input">
+							<option value="true" selected>Yes</option>
+							<option value="false">No</option>
+						</select>
+						<p>When new issues come out, automatically monitor them.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="monitoring-scheme-input">Monitoring Scheme</label></th>
+					<td>
+						<select id="monitoring-scheme-input">
+							<option value="all" selected>All</option>
+							<option value="missing">Missing</option>
+							<option value="none">None</option>
+						</select>
+						<p>Choose which issues to monitor that have already been released.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="specialoverride-input">Special Version</label></th>
+					<td>
+						<select id="specialoverride-input">
+							<option value="auto" selected>Automatic</option>
+							<option value="">Normal Volume</option>
+							<option value="tpb">Trade Paper Back</option>
+							<option value="one-shot">One Shot</option>
+							<option value="hard-cover">Hard Cover</option>
+							<option value="omnibus">Omnibus</option>
+							<option value="volume-as-issue">Volume As Issue</option>
+						</select>
+					</td>
+				</tr>
+			</table>
+		</form>
+	{% endset %}
+
+	{% set add_submit %}
+		<label for="auto-search-input">Start search for missing volume</label>
+		<input type="checkbox" id="auto-search-input">
+		<button id="add-volume" type="submit" form="add-form">Add Volume</button>
+	{% endset %}
+
+	{{ window(False, "add-window", "Add volume", add_content, add_submit, "add-loading-window", False) }}
+{% endblock windows %}
+
+{% block right_side_header %}
+	<form id="search-container" class="icon-dark-color" aria-label="Search bar">
+		<button type="submit" id="start-search" aria-label="Start search">
+			<img src="{{url_base}}/static/img/search.svg" alt="">
+		</button>
+		<input type="text" id="search-input" placeholder="Search publishers..." aria-label="Search input">
+		<button type="button" id="clear-search" aria-label="Clear search">
+			<img src="{{url_base}}/static/img/cancel.svg" alt="">
+		</button>
+	</form>
+{% endblock %}
+
+{% block main %}
+<main>
+	<section class="tool-bar-container" aria-label="Tool bar">
+		<div class="tool-bar">
+			{{ icon_button("refresh-button", "Refresh publishers", "refresh.svg", "Refresh") }}
+			<button id="back-button" class="icon-button hidden" aria-label="Back to publishers">
+				<img src="{{url_base}}/static/img/arrow-left.svg" alt="">
+				<span>Back</span>
+			</button>
+		</div>
+		<div class="tool-bar">
+			<select id="publisher-sort" aria-label="Sort publishers">
+				<option value="major">Major, then A-Z</option>
+				<option value="name-asc">Name A-Z</option>
+				<option value="name-desc">Name Z-A</option>
+				<option value="volumes-desc">Most Volumes</option>
+			</select>
+			<span id="publisher-count" aria-live="polite"></span>
+			<span id="current-view-label"></span>
+		</div>
+	</section>
+	<div class="main-window">
+		<div id="loading" class="loading-indicator">
+			<p>Loading...</p>
+		</div>
+		<div id="empty-state" class="empty-state hidden">
+			<p>No publishers found.</p>
+		</div>
+		
+		<!-- Publishers grid view -->
+		<div id="publishers-grid" class="publishers-container"></div>
+		
+		<!-- Publisher volumes view -->
+		<div id="volumes-grid" class="volumes-container hidden"></div>
+		<div class="load-more-container">
+			<button id="load-more-button" type="button" class="hidden">Load More</button>
+		</div>
+	</div>
+</main>
+{% endblock main %}

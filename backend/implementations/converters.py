@@ -67,7 +67,14 @@ def extract_files_from_folder(
             assume_volume_number=False
         )
 
-        if folder_extraction_filter(efd, volume_data, volume_issues, end_year):
+        # Use trust_source=True because the archive was already matched to
+        # this volume during download selection. This allows files with
+        # variant series names (e.g. "El Diablo and Killer Croc" vs
+        # "El Diablo & Boomerang") to be kept as long as their issue numbers
+        # fall within the volume's range.
+        if folder_extraction_filter(
+            efd, volume_data, volume_issues, end_year, trust_source=True
+        ):
             relevant_files.append(file)
 
     if not relevant_files:

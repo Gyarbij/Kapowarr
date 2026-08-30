@@ -1,47 +1,76 @@
 # -*- coding: utf-8 -*-
 
 from asyncio import run
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Any, Dict, List, Tuple, Type, Union
 
 from flask import Blueprint, request, send_file
 
-from backend.base.custom_exceptions import (InvalidKeyValue,
-                                            KeyNotFound, TaskNotFound)
-from backend.base.definitions import (BlocklistReason, BlocklistReasonID,
-                                      CredentialData, CredentialSource,
-                                      DownloadSource, KapowarrException,
-                                      LibraryFilter, LibrarySorting,
-                                      MonitorScheme, SpecialVersion,
-                                      StartType, VolumeData)
+from backend.base.custom_exceptions import InvalidKeyValue, KeyNotFound, TaskNotFound
+from backend.base.definitions import (
+    BlocklistReason,
+    BlocklistReasonID,
+    CredentialData,
+    CredentialSource,
+    DownloadSource,
+    FileMatch,
+    KapowarrException,
+    LibraryDateFilter,
+    LibraryFilter,
+    LibrarySorting,
+    LibraryStatusFilter,
+    MonitorScheme,
+    SpecialVersion,
+    StartType,
+    VolumeData,
+)
 from backend.base.helpers import hash_credential
 from backend.base.logging import LOGGER, get_log_file_contents
-from backend.features.download_queue import (DownloadHandler,
-                                             delete_download_history,
-                                             get_download_history)
-from backend.features.library_import import (import_library,
-                                             propose_library_import)
+from backend.features.download_queue import (
+    DownloadHandler,
+    delete_download_history,
+    get_download_history,
+)
+from backend.features.library_import import import_library, propose_library_import
 from backend.features.mass_edit import run_mass_editor_action
 from backend.features.search import manual_search
-from backend.features.tasks import (Task, TaskHandler,
-                                    delete_task_history, get_task_history,
-                                    get_task_planning, task_library)
-from backend.implementations.blocklist import (add_to_blocklist,
-                                               delete_blocklist,
-                                               delete_blocklist_entry,
-                                               get_blocklist,
-                                               get_blocklist_entry)
+from backend.features.tasks import (
+    Task,
+    TaskHandler,
+    delete_task_history,
+    get_task_history,
+    get_task_planning,
+    task_library,
+)
+from backend.implementations.blocklist import (
+    add_to_blocklist,
+    delete_blocklist,
+    delete_blocklist_entry,
+    get_blocklist,
+    get_blocklist_entry,
+)
 from backend.implementations.comicvine import ComicVine
 from backend.implementations.conversion import preview_mass_convert
 from backend.implementations.converters import ConvertersManager
 from backend.implementations.credentials import Credentials
 from backend.implementations.external_clients import ExternalClients
-from backend.implementations.naming import (generate_volume_folder_name,
-                                            preview_mass_rename)
+from backend.implementations.file_matching import get_file_matching, set_file_matching
+from backend.implementations.metadata_cache import MetadataCache
+from backend.implementations.naming import (
+    generate_volume_folder_name,
+    preview_mass_rename,
+)
+from backend.implementations.release_discovery import get_release_discovery
 from backend.implementations.remote_mapping import RemoteMappings
 from backend.implementations.root_folders import RootFolders
 from backend.implementations.volumes import Library, delete_issue_file
+from backend.implementations.weekly_packs import (
+    WEEKLY_PACK_ACTIONS,
+    get_enriched_weekly_packs,
+    queue_weekly_pack_items,
+)
+from backend.internals.db import get_db
 from backend.internals.db_models import FilesDB
 from backend.internals.server import Server, StartTypeHandlers
 from backend.internals.settings import Settings, get_about_data
@@ -55,6 +84,23 @@ def return_api(
     code: int = 200
 ) -> Tuple[Dict[str, Any], int]:
     return {'error': error, 'result': result}, code
+
+
+def _get_configured_metadata_source():
+    from backend.implementations.metadata_sources import (
+        MetadataSourceType,
+        get_metadata_source,
+    )
+
+    source_value = Settings().sv.metadata_source or MetadataSourceType.COMICVINE.value
+    try:
+        source_type = MetadataSourceType(source_value)
+    except ValueError:
+        LOGGER.warning(
+            f'Invalid metadata_source setting "{source_value}", falling back to comicvine'
+        )
+        source_type = MetadataSourceType.COMICVINE
+    return get_metadata_source(source_type)
 
 
 def error_handler(method) -> Any:
@@ -122,6 +168,18 @@ def extract_key(request, key: str, check_existence: bool = True) -> Any:
         elif key == 'filter':
             try:
                 value = LibraryFilter[value.upper()] if value else None
+            except KeyError:
+                raise InvalidKeyValue(key, value)
+
+        elif key == 'status_filter':
+            try:
+                value = LibraryStatusFilter[value.upper()] if value else None
+            except KeyError:
+                raise InvalidKeyValue(key, value)
+
+        elif key == 'date_filter':
+            try:
+                value = LibraryDateFilter[value.upper()] if value else None
             except KeyError:
                 raise InvalidKeyValue(key, value)
 
@@ -352,7 +410,7 @@ def api_tasks():
             kwargs['filepath_filter'] = filepath_filter or []
 
         if task.action == 'update_all':
-            allow_skipping = data.get('allow_skipping', True)
+            allow_skipping = data.get('allow_skipping', False)
             if not isinstance(allow_skipping, bool):
                 raise InvalidKeyValue('allow_skipping', allow_skipping)
             kwargs['allow_skipping'] = allow_skipping
@@ -437,6 +495,14 @@ def api_settings():
             and data[s] != getattr(settings.sv, s)
             for s in ('host', 'port', 'url_base')
         )
+        proxy_changes = any(
+            s in data
+            and data[s] != getattr(settings.sv, s)
+            for s in (
+                'proxy_type', 'proxy_host', 'proxy_port',
+                'proxy_username', 'proxy_password', 'proxy_ignored_addresses'
+            )
+        )
 
         if hosting_changes:
             settings.backup_hosting_settings()
@@ -445,6 +511,8 @@ def api_settings():
 
         if hosting_changes:
             Server().restart(StartType.RESTART_HOSTING_CHANGES)
+        elif proxy_changes:
+            Server().restart()
 
         return return_api(settings.get_public_settings().todict())
 
@@ -462,9 +530,18 @@ def api_settings():
             raise InvalidKeyValue('reset_keys', reset_keys)
 
         hosting_changes = any(
-            s in reset_keys
-            and settings.get_default_value(s) != getattr(settings.sv, s)
-            for s in ('host', 'port', 'url_prefix')
+            s in data
+            and data[s] is not None
+            and data[s] != getattr(settings.sv, s)
+            for s in ('host', 'port', 'url_base')
+        )
+        proxy_changes = any(
+            s in data
+            and data[s] != getattr(settings.sv, s)
+            for s in (
+                'proxy_type', 'proxy_host', 'proxy_port',
+                'proxy_username', 'proxy_password', 'proxy_ignored_addresses'
+            )
         )
 
         if hosting_changes:
@@ -475,6 +552,8 @@ def api_settings():
 
         if hosting_changes:
             Server().restart(StartType.RESTART_HOSTING_CHANGES)
+        elif proxy_changes:
+            Server().restart()
 
         return return_api(settings.get_public_settings().todict())
 
@@ -739,6 +818,26 @@ def api_volumes_search():
         return return_api({'folder': folder})
 
 
+@api.route('/volumes/metadata', methods=['GET'])
+@error_handler
+@auth
+def api_volumes_metadata():
+    comicvine_id = extract_key(request, 'comicvine_id')
+    try:
+        comicvine_id = int(comicvine_id)
+    except (ValueError, TypeError):
+        raise InvalidKeyValue('comicvine_id', comicvine_id)
+
+    source = _get_configured_metadata_source()
+    volume = run(source.fetch_volume(comicvine_id))
+
+    # Remove non-JSON-serializable cover bytes and bulky issues list
+    volume.pop('cover', None)
+    volume.pop('issues', None)
+
+    return return_api(volume)
+
+
 @api.route('/volumes', methods=['GET', 'POST'])
 @error_handler
 @auth
@@ -747,6 +846,8 @@ def api_volumes():
         query = extract_key(request, 'query', False)
         sort = extract_key(request, 'sort', False)
         filter = extract_key(request, 'filter', False)
+        status_filter = extract_key(request, 'status_filter', False)
+        date_filter = extract_key(request, 'date_filter', False)
         offset = extract_key(request, 'offset', False)
         limit = extract_key(request, 'limit', False)
         page = extract_key(request, 'page', False)
@@ -780,6 +881,11 @@ def api_volumes():
         minimal_raw = request.values.get('minimal', 'false')
         minimal = minimal_raw == 'true'
 
+        if filter is not None and (
+            status_filter is not None or date_filter is not None
+        ):
+            raise InvalidKeyValue('filter', filter.value)
+
         if query:
             volumes = Library.search(
                 query, sort, filter,
@@ -787,13 +893,17 @@ def api_volumes():
                 limit=limit,
                 minimal=minimal,
                 publisher=publisher,
-                has_description=has_description
+                has_description=has_description,
+                status_filter=status_filter,
+                date_filter=date_filter
             )
             total = Library.search_count(
                 query,
                 filter,
                 publisher=publisher,
-                has_description=has_description
+                has_description=has_description,
+                status_filter=status_filter,
+                date_filter=date_filter
             )
         else:
             volumes = Library.get_public_volumes(
@@ -802,12 +912,16 @@ def api_volumes():
                 limit=limit,
                 minimal=minimal,
                 publisher=publisher,
-                has_description=has_description
+                has_description=has_description,
+                status_filter=status_filter,
+                date_filter=date_filter
             )
             total = Library.get_volume_count(
                 filter,
                 publisher=publisher,
-                has_description=has_description
+                has_description=has_description,
+                status_filter=status_filter,
+                date_filter=date_filter
             )
 
         result: Dict[str, Any] = {
@@ -991,11 +1105,51 @@ def api_issues(id: int):
         result = issue.get_data()
         return return_api(result)
 
+
+# =====================
+# Manual File Match
+# =====================
+@api.route('/volumes/<int:id>/manualmatch', methods=['GET', 'PUT'])
+@error_handler
+@auth
+def api_manual_match(id: int):
+    Library.get_volume(id)
+
+    if request.method == 'GET':
+        result = get_file_matching(id)
+        return return_api(result)
+
+    elif request.method == 'PUT':
+        file_matching_changes = request.get_json()
+        if not isinstance(file_matching_changes, list):
+            raise InvalidKeyValue('body', file_matching_changes)
+
+        entry_types = FileMatch.__annotations__
+        for entry in file_matching_changes:
+            if not isinstance(entry, dict):
+                raise InvalidKeyValue('body', file_matching_changes)
+            if not all(
+                key in entry_types
+                and (
+                    (
+                        isinstance(value, list)
+                        and all(isinstance(i_id, int) for i_id in value)
+                    )
+                    if entry_types[key] == List[int] else
+                    isinstance(value, entry_types[key])
+                )
+                for key, value in entry.items()
+            ):
+                raise InvalidKeyValue('body', file_matching_changes)
+
+        set_file_matching(id, file_matching_changes)
+
+        return return_api({})
+
+
 # =====================
 # Renaming
 # =====================
-
-
 @api.route('/volumes/<int:id>/rename', methods=['GET'])
 @error_handler
 @auth
@@ -1022,6 +1176,427 @@ def api_rename_issue(id: int):
         if before != after
     }
     return return_api(only_renamings)
+
+# =====================
+# Releases & Publishers
+# =====================
+
+
+def _metadata_int_param(
+    key: str,
+    default: int,
+    maximum: int = 5000
+) -> int:
+    value = extract_key(request, key, False)
+    if value is None:
+        return default
+    try:
+        value = int(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidKeyValue(key, value) from exc
+    if not 1 <= value <= maximum:
+        raise InvalidKeyValue(key, value)
+    return value
+
+
+def _force_metadata_refresh() -> bool:
+    value = extract_key(request, 'force_refresh', False)
+    if value is None:
+        return False
+    if value not in ('true', 'false', '1', '0'):
+        raise InvalidKeyValue('force_refresh', value)
+    return value in ('true', '1')
+
+
+def _validate_release_range(start_date: str, end_date: str) -> None:
+    try:
+        start = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end = datetime.strptime(end_date, '%Y-%m-%d').date()
+    except (TypeError, ValueError) as exc:
+        raise InvalidKeyValue(
+            'date_range', f'{start_date}|{end_date}'
+        ) from exc
+    if end < start or (end - start).days > 365:
+        raise InvalidKeyValue('date_range', f'{start_date}|{end_date}')
+
+
+def _filter_discovery_items(items: List[dict]) -> List[dict]:
+    publisher = (request.values.get('publisher') or '').strip().lower()
+    local_status = (request.values.get('local_status') or '').strip()
+    provider = (request.values.get('provider') or '').strip()
+    text_query = (request.values.get('query') or '').strip().lower()
+    allowed_statuses = {
+        'downloaded',
+        'missing_monitored',
+        'missing_unmonitored',
+        'metadata_pending',
+        'not_in_library',
+        'ambiguous'
+    }
+    if local_status and local_status not in allowed_statuses:
+        raise InvalidKeyValue('local_status', local_status)
+
+    def publisher_matches(item: dict) -> bool:
+        item_publisher = (item.get('publisher') or '').lower()
+        if not publisher:
+            return True
+        if publisher == 'indie':
+            return not any(
+                major in item_publisher
+                for major in ('dc', 'marvel', 'image')
+            )
+        return publisher in item_publisher
+
+    return [
+        item
+        for item in items
+        if publisher_matches(item)
+        and (
+            not local_status
+            or item.get('local_status') == local_status
+        )
+        and (
+            not provider
+            or provider in item.get('providers', [item.get('provider')])
+        )
+        and (
+            not text_query
+            or text_query in item.get('series_title', '').lower()
+        )
+    ]
+
+
+@api.route('/releases/discovery', methods=['GET'])
+@error_handler
+@auth
+def api_release_discovery():
+    today = datetime.now().date()
+    start_date = extract_key(request, 'start_date', False)
+    end_date = extract_key(request, 'end_date', False)
+    start_date = start_date or (today - timedelta(days=60)).isoformat()
+    end_date = end_date or (today + timedelta(days=30)).isoformat()
+    _validate_release_range(start_date, end_date)
+
+    items = run(get_release_discovery(
+        start_date,
+        end_date,
+        force_refresh=_force_metadata_refresh()
+    ))
+    items = _filter_discovery_items(items)
+    page = _metadata_int_param('page', 1, 10000)
+    per_page = _metadata_int_param('per_page', 100, 500)
+    start = (page - 1) * per_page
+    return return_api({
+        'items': items[start:start + per_page],
+        'total': len(items),
+        'page': page,
+        'per_page': per_page,
+        'total_pages': max(1, (len(items) + per_page - 1) // per_page)
+    })
+
+
+@api.route('/weekly-packs', methods=['GET', 'POST'])
+@error_handler
+@auth
+def api_weekly_packs():
+    if request.method == 'POST':
+        data = request.get_json()
+        if not isinstance(data, dict):
+            raise InvalidKeyValue('body', data)
+        record_keys = data.get('record_keys')
+        weeks = data.get('weeks', 8)
+        action = data.get('action', 'download')
+        if not (
+            isinstance(record_keys, list)
+            and 0 < len(record_keys) <= 100
+            and all(isinstance(key, str) and key for key in record_keys)
+        ):
+            raise InvalidKeyValue('record_keys', record_keys)
+        if not isinstance(weeks, int) or not 1 <= weeks <= 50:
+            raise InvalidKeyValue('weeks', weeks)
+        if not isinstance(action, str) or action not in WEEKLY_PACK_ACTIONS:
+            raise InvalidKeyValue('action', action)
+
+        outcomes = run(queue_weekly_pack_items(
+            record_keys,
+            weeks,
+            action=action
+        ))
+        counts: Dict[str, int] = {}
+        for outcome in outcomes:
+            status = outcome['status']
+            counts[status] = counts.get(status, 0) + 1
+        return return_api({
+            'counts': counts,
+            'items': outcomes
+        }, code=201)
+
+    weeks = _metadata_int_param('weeks', 8, 50)
+    packs = run(get_enriched_weekly_packs(
+        weeks,
+        force_refresh=_force_metadata_refresh()
+    ))
+    publisher = (request.values.get('publisher') or '').strip().lower()
+    local_status = (request.values.get('local_status') or '').strip()
+    text_query = (request.values.get('query') or '').strip().lower()
+    filtered_packs = []
+    for pack in packs:
+        items = _filter_discovery_items(pack['items'])
+        archives = [
+            archive
+            for archive in pack['archives']
+            if not publisher
+            or publisher in (archive.get('publisher') or '').lower()
+        ]
+        if items or (
+            archives
+            and not local_status
+            and not text_query
+        ):
+            filtered_packs.append({
+                **pack,
+                'items': items,
+                'archives': archives
+            })
+
+    page = _metadata_int_param('page', 1, 10000)
+    per_page = _metadata_int_param('per_page', 8, 20)
+    start = (page - 1) * per_page
+    return return_api({
+        'packs': filtered_packs[start:start + per_page],
+        'total_packs': len(filtered_packs),
+        'total_items': sum(
+            len(pack['items'])
+            for pack in filtered_packs
+        ),
+        'page': page,
+        'per_page': per_page,
+        'total_pages': max(
+            1,
+            (len(filtered_packs) + per_page - 1) // per_page
+        )
+    })
+
+
+@api.route('/releases/new', methods=['GET'])
+@error_handler
+@auth
+def api_releases_new():
+    """Get new comic releases from the configured metadata source.
+    
+    Query params:
+        start_date: Start of date range (YYYY-MM-DD)
+        end_date: End of date range (YYYY-MM-DD)
+        limit: Max results (default 100)
+    """
+    start_date = extract_key(request, 'start_date', False)
+    end_date = extract_key(request, 'end_date', False)
+    # Default to last 30 days if not specified
+    if not start_date:
+        start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+    if not end_date:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+
+    _validate_release_range(start_date, end_date)
+    limit = _metadata_int_param('limit', 100)
+    source = _get_configured_metadata_source()
+    releases = run(MetadataCache(source).get_releases(
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        force_refresh=_force_metadata_refresh()
+    ))
+    return return_api(releases)
+
+
+@api.route('/releases/upcoming', methods=['GET'])
+@error_handler
+@auth
+def api_releases_upcoming():
+    """Get upcoming comic releases from the configured metadata source.
+    
+    Query params:
+        days_ahead: Days to look ahead (default 30)
+    """
+    days_ahead = _metadata_int_param('days_ahead', 30, 365)
+    today = datetime.now().date()
+    source = _get_configured_metadata_source()
+    releases = run(MetadataCache(source).get_releases(
+        start_date=today.isoformat(),
+        end_date=(today + timedelta(days=days_ahead)).isoformat(),
+        limit=_metadata_int_param('limit', 5000),
+        force_refresh=_force_metadata_refresh()
+    ))
+    return return_api(releases)
+
+
+@api.route('/releases/recent', methods=['GET'])
+@error_handler
+@auth
+def api_releases_recent():
+    """Get recently released comics from the configured metadata source.
+    
+    Query params:
+        days_back: Days to look back (default 7)
+    """
+    days_back = _metadata_int_param('days_back', 7, 365)
+    today = datetime.now().date()
+    source = _get_configured_metadata_source()
+    releases = run(MetadataCache(source).get_releases(
+        start_date=(today - timedelta(days=days_back)).isoformat(),
+        end_date=today.isoformat(),
+        limit=_metadata_int_param('limit', 5000),
+        force_refresh=_force_metadata_refresh()
+    ))
+    return return_api(releases)
+
+
+@api.route('/releases/library/upcoming', methods=['GET'])
+@error_handler
+@auth
+def api_library_upcoming():
+    """Get upcoming issues from volumes in the library.
+    
+    Query params:
+        days_ahead: Days to look ahead (default 90)
+        monitored_only: Only show monitored volumes (default true)
+    """
+    start_date = extract_key(request, 'start_date', False)
+    end_date = extract_key(request, 'end_date', False)
+    monitored_only = extract_key(request, 'monitored_only', False)
+    monitored_only = monitored_only != 'false' if monitored_only else True
+
+    if start_date or end_date:
+        if not (start_date and end_date):
+            raise InvalidKeyValue(
+                'date_range', f'{start_date}|{end_date}'
+            )
+        _validate_release_range(start_date, end_date)
+        today = start_date
+        future = end_date
+    else:
+        days_ahead = _metadata_int_param('days_ahead', 90, 365)
+        current_date = datetime.now().date()
+        today = current_date.isoformat()
+        future = (current_date + timedelta(days=days_ahead)).isoformat()
+    
+    cursor = get_db()
+    
+    # Query for upcoming issues with their volume info
+    query = """
+        SELECT 
+            i.id as issue_id,
+            i.comicvine_id as issue_cv_id,
+            i.issue_number,
+            i.calculated_issue_number,
+            i.title as issue_title,
+            i.store_date,
+            i.date as cover_date,
+            v.id as volume_id,
+            v.comicvine_id as volume_cv_id,
+            v.title as volume_title,
+            v.publisher,
+            v.monitored
+        FROM issues i
+        INNER JOIN volumes v ON i.volume_id = v.id
+        WHERE i.store_date >= ? AND i.store_date <= ?
+    """
+    
+    params = [today, future]
+    
+    if monitored_only:
+        query += " AND v.monitored = 1"
+    
+    query += " ORDER BY i.store_date ASC, v.title ASC"
+    
+    results = cursor.execute(query, params).fetchalldict()
+    
+    return return_api(results)
+
+
+@api.route('/publishers', methods=['GET'])
+@error_handler
+@auth
+def api_publishers():
+    """Get list of publishers from the configured metadata source.
+    
+    Query params:
+        limit: Max results (default 50)
+    """
+    limit = _metadata_int_param('limit', 50, 1000)
+    source = _get_configured_metadata_source()
+    publishers = run(MetadataCache(source).get_publishers(
+        limit=limit,
+        force_refresh=_force_metadata_refresh()
+    ))
+    return return_api(publishers)
+
+
+@api.route('/publishers/<int:publisher_id>/volumes', methods=['GET'])
+@error_handler
+@auth
+def api_publisher_volumes(publisher_id: int):
+    """Get volumes from a specific publisher.
+    
+    Query params:
+        limit: Max results (default 100)
+    """
+    limit = _metadata_int_param('limit', 100, 1000)
+    source = _get_configured_metadata_source()
+    volumes = run(MetadataCache(source).get_publisher_volumes(
+        publisher_id=publisher_id,
+        limit=limit,
+        force_refresh=_force_metadata_refresh()
+    ))
+    return return_api(volumes)
+
+
+# =====================
+# Metadata Sources
+# =====================
+
+
+@api.route('/metadata/sources', methods=['GET'])
+@error_handler
+@auth
+def api_metadata_sources():
+    """Get list of available metadata sources."""
+    from backend.implementations.metadata_sources import get_available_sources
+    
+    sources = get_available_sources()
+    current_source = Settings().sv.metadata_source
+    
+    return return_api({
+        'sources': sources,
+        'current': current_source
+    })
+
+
+@api.route('/metadata/sources/test', methods=['POST'])
+@error_handler
+@auth
+def api_metadata_source_test():
+    """Test a metadata source's credentials.
+    
+    Body:
+        source: The source type to test (comicvine or metron)
+    """
+    from backend.implementations.metadata_sources import (
+        MetadataSourceType,
+        get_metadata_source,
+    )
+    
+    data = request.get_json()
+    source_type = data.get('source', 'comicvine')
+    
+    try:
+        source_enum = MetadataSourceType(source_type)
+        source = get_metadata_source(source_enum)
+        valid = source.test_key()
+        return return_api({'valid': valid})
+    except ValueError:
+        raise InvalidKeyValue('source', source_type)
+
 
 # =====================
 # File Conversion
@@ -1305,7 +1880,7 @@ def api_credentials():
 
     if request.method == 'GET':
         result = [
-            c.todict()
+            c.todict(hide_password=True)
             for c in cred.get_all()
         ]
         return return_api(result)
@@ -1334,7 +1909,7 @@ def api_credentials():
             password=data.get("password"),
             api_key=data.get("api_key")
         ))
-        return return_api(result.todict(), code=201)
+        return return_api(result.todict(hide_password=True), code=201)
 
 
 @api.route('/credentials/<int:id>', methods=['GET', 'DELETE'])
@@ -1343,7 +1918,7 @@ def api_credentials():
 def api_credential(id: int):
     cred = Credentials()
     if request.method == 'GET':
-        result = cred.get_one(id).todict()
+        result = cred.get_one(id).todict(hide_password=True)
         return return_api(result)
 
     elif request.method == 'DELETE':
@@ -1458,8 +2033,8 @@ def api_mass_editor():
     if not isinstance(args, dict):
         raise InvalidKeyValue('args', args)
 
-    run_mass_editor_action(action, volume_ids, **args)
-    return return_api({})
+    result = run_mass_editor_action(action, volume_ids, **args)
+    return return_api(result or {})
 
 
 # =====================

@@ -9,11 +9,19 @@ from os.path import basename, dirname, splitext
 from re import IGNORECASE, Pattern, compile
 from typing import Collection, Dict, Tuple, TypeVar, Union
 
-from backend.base.definitions import (CharConstants, FileConstants,
-                                      FilenameData, SpecialVersion, VolumeData)
-from backend.base.helpers import (check_overlapping_pos,
-                                  fix_year as fix_broken_year,
-                                  normalise_number, normalise_string)
+from backend.base.definitions import (
+    CharConstants,
+    FileConstants,
+    FilenameData,
+    SpecialVersion,
+    VolumeData,
+)
+from backend.base.helpers import (
+    check_overlapping_pos,
+    normalise_number,
+    normalise_string,
+)
+from backend.base.helpers import fix_year as fix_broken_year
 from backend.base.logging import LOGGER
 
 # autopep8: off
@@ -39,7 +47,7 @@ japanese_volume_regex = compile(r'(\d+)巻', IGNORECASE)
 french_issue_regex = compile(r'\bT(?:omes?)?(?=[\s\.]?\d)', IGNORECASE)
 
 # Extract data from (stripped)filename
-special_version_regex = compile(r'(?:(?<!\s{3})\b|\()(?:(?P<tpb>tpb|trade paper back)|(?P<one_shot>os|one[ \-_]?shot)|(?P<hard_cover>hc|hard[ \-_]?cover)|(?P<omnibus>omnibus))(?:\b|\))', IGNORECASE)
+special_version_regex = compile(r'(?:(?<!\s{3})\b|\()(?:(?P<tpb>tpb|trade\s+paper\s*back|(?:epic|complete|ultimate|definitive)\s+collection|collected\s+edition|complete\s+edition|compendium)|(?P<one_shot>os|one[ \-_]?shot)|(?P<hard_cover>hc|hard[ \-_]?cover|library\s+edition|deluxe\s+edition|artist\'?s?\s+edition|gallery\s+edition|masterworks|absolute\s+edition)|(?P<omnibus>omnibus))(?:\b|\))', IGNORECASE)
 volume_regex = compile(volume_regex_snippet, IGNORECASE)
 volume_folder_regex = compile(volume_regex_snippet + r'|^(\d+)$', IGNORECASE)
 issue_regex = compile(r'\(_(\-?' + issue_regex_snippet + r')\)', IGNORECASE)
@@ -489,6 +497,14 @@ def extract_filename_data(
 
         else:
             special_result = special_version_regex.search(filename)
+            explicit_issue_result = issue_regex_2.search(filename)
+            if (
+                special_result
+                and explicit_issue_result
+                and special_result.start(0) < volume_pos
+                and volume_pos < explicit_issue_result.start(0)
+            ):
+                special_result = None
             if special_result:
                 # Convert regex group name to value
                 special_version = [

@@ -17,6 +17,47 @@
 	</section>
 	<div class="settings-container">
 		<form id="settings-form">
+			<h2>Metadata Source</h2>
+			<table class="fold-table">
+				<tr>
+					<th><label for="metadata-source-input">Primary Source</label></th>
+					<td>
+						<select id="metadata-source-input" required>
+							<option value="comicvine">ComicVine</option>
+							<option value="metron">Metron</option>
+						</select>
+						<p>The primary metadata source for volume and issue information.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="comicvine-api-key-input">ComicVine API Key</label></th>
+					<td>
+						<div class="input-with-button">
+							<input type="password" id="comicvine-api-key-input" autocomplete="off">
+							<button type="button" id="test-comicvine-btn">Test</button>
+						</div>
+						<p>Get your free API key from <a href="https://comicvine.gamespot.com/api/" target="_blank">comicvine.gamespot.com/api/</a></p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="metron-username-input">Metron Username</label></th>
+					<td>
+						<input type="text" id="metron-username-input" autocomplete="off">
+						<p>Your Metron account username. Create a free account at <a href="https://metron.cloud/" target="_blank">metron.cloud</a></p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="metron-password-input">Metron Password</label></th>
+					<td>
+						<div class="input-with-button">
+							<input type="password" id="metron-password-input" autocomplete="off">
+							<button type="button" id="test-metron-btn">Test</button>
+						</div>
+						<p>Your Metron account password.</p>
+					</td>
+				</tr>
+			</table>
+
 			<h2>Fetching</h2>
 			<table class="fold-table">
 				<tr>

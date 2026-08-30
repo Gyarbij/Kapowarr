@@ -7,16 +7,30 @@ Setting up the database, handling connections, using it and closing it.
 from __future__ import annotations
 
 from os.path import dirname, exists, isdir, join
-from sqlite3 import (PARSE_DECLTYPES, Connection, Cursor, ProgrammingError,
-                     Row, register_adapter, register_converter)
+from sqlite3 import (
+    PARSE_DECLTYPES,
+    Connection,
+    Cursor,
+    ProgrammingError,
+    Row,
+    register_adapter,
+    register_converter,
+)
 from threading import RLock, current_thread, enumerate
 from time import time
 from typing import Any, Dict, Iterable, Iterator, List, Type, Union
 
 from flask import g
 
-from backend.base.definitions import (Constants, DateType, FileDate,
-                                      SeedingHandling, SpecialVersion, T)
+from backend.base.definitions import (
+    Constants,
+    DateType,
+    FileDate,
+    ProxyType,
+    SeedingHandling,
+    SpecialVersion,
+    T,
+)
 from backend.base.files import create_folder, folder_path
 from backend.base.helpers import CommaList, current_thread_id
 from backend.base.logging import LOGGER, set_log_level
@@ -326,6 +340,7 @@ def setup_db_adapters_and_converters() -> None:
     register_adapter(bool, lambda b: int(b))
     register_converter("BOOL", lambda b: b == b'1')
     register_adapter(CommaList, lambda c: str(c))
+    register_adapter(ProxyType, lambda e: e.value)
     register_adapter(FileDate, lambda e: e.value)
     register_adapter(SeedingHandling, lambda e: e.value)
     register_adapter(SpecialVersion, lambda e: e.value)
@@ -350,6 +365,7 @@ def setup_db() -> None:
     set_log_level(settings_values.log_level)
 
     DatabaseMigrationHandler.migrate()
+    cursor.executescript(DB_SCHEMA_INDEXES)
 
     # Generate api key
     if not settings_values.api_key:
@@ -430,6 +446,7 @@ CREATE TABLE IF NOT EXISTS issues(
     date VARCHAR(10),
     description TEXT,
     monitored BOOL NOT NULL DEFAULT 1,
+    store_date VARCHAR(10),
 
     FOREIGN KEY (volume_id) REFERENCES volumes(id)
         ON DELETE CASCADE
@@ -448,6 +465,7 @@ CREATE TABLE IF NOT EXISTS files(
 CREATE TABLE IF NOT EXISTS issues_files(
     file_id INTEGER NOT NULL,
     issue_id INTEGER NOT NULL,
+    forced BOOL NOT NULL DEFAULT 0,
 
     FOREIGN KEY (file_id) REFERENCES files(id)
         ON DELETE CASCADE,
@@ -463,6 +481,7 @@ CREATE TABLE IF NOT EXISTS volume_files(
     file_id INTEGER PRIMARY KEY,
     volume_id INTEGER NOT NULL,
     file_type VARCHAR(15) NOT NULL,
+    forced BOOL NOT NULL DEFAULT 0,
 
     FOREIGN KEY (volume_id) REFERENCES volumes(id)
         ON DELETE CASCADE,
@@ -565,4 +584,91 @@ CREATE TABLE IF NOT EXISTS remote_mappings(
         REFERENCES external_download_clients(id)
         ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS release_cache(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    metadata_source VARCHAR(30) NOT NULL,
+    issue_cv_id INTEGER NOT NULL,
+    volume_cv_id INTEGER NOT NULL,
+    volume_title TEXT NOT NULL,
+    issue_number TEXT NOT NULL,
+    calculated_issue_number REAL,
+    store_date VARCHAR(10),
+    cover_date VARCHAR(10),
+    cover_url TEXT,
+    publisher TEXT,
+    fetched_at INTEGER NOT NULL,
+    UNIQUE(metadata_source, issue_cv_id)
+);
+CREATE TABLE IF NOT EXISTS release_cache_windows(
+    metadata_source VARCHAR(30) NOT NULL,
+    start_date VARCHAR(10) NOT NULL,
+    end_date VARCHAR(10) NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY(metadata_source, start_date, end_date)
+);
+CREATE TABLE IF NOT EXISTS publisher_cache(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    metadata_source VARCHAR(30) NOT NULL,
+    comicvine_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    site_url TEXT,
+    volume_count INTEGER DEFAULT 0,
+    fetched_at INTEGER NOT NULL,
+    UNIQUE(metadata_source, comicvine_id)
+);
+CREATE TABLE IF NOT EXISTS metadata_response_cache(
+    metadata_source VARCHAR(30) NOT NULL,
+    resource VARCHAR(50) NOT NULL,
+    cache_key TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY(metadata_source, resource, cache_key)
+);
+CREATE TABLE IF NOT EXISTS release_discovery(
+    provider VARCHAR(30) NOT NULL,
+    record_key TEXT NOT NULL,
+    external_id TEXT,
+    external_url TEXT,
+    publisher TEXT,
+    series_title TEXT NOT NULL,
+    series_year INTEGER,
+    issue_number REAL,
+    issue_year INTEGER,
+    release_date VARCHAR(10),
+    cover_url TEXT,
+    source_updated_at TEXT,
+    available BOOL NOT NULL DEFAULT 0,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY(provider, record_key)
+);
+CREATE TABLE IF NOT EXISTS pending_release_watches(
+    record_key TEXT PRIMARY KEY,
+    volume_id INTEGER NOT NULL,
+    first_seen INTEGER NOT NULL,
+    last_checked INTEGER NOT NULL,
+
+    FOREIGN KEY (volume_id) REFERENCES volumes(id)
+        ON DELETE CASCADE
+);
+"""
+
+DB_SCHEMA_INDEXES = """
+CREATE INDEX IF NOT EXISTS volumes_created_at_index
+    ON volumes(created_at);
+CREATE INDEX IF NOT EXISTS release_cache_source_date_index
+    ON release_cache(metadata_source, store_date, cover_date);
+CREATE INDEX IF NOT EXISTS release_cache_windows_expiry_index
+    ON release_cache_windows(metadata_source, expires_at);
+CREATE INDEX IF NOT EXISTS publisher_cache_source_name_index
+    ON publisher_cache(metadata_source, name);
+CREATE INDEX IF NOT EXISTS metadata_response_cache_expiry_index
+    ON metadata_response_cache(metadata_source, resource, expires_at);
+CREATE INDEX IF NOT EXISTS release_discovery_date_index
+    ON release_discovery(release_date, provider);
+CREATE INDEX IF NOT EXISTS release_discovery_title_index
+    ON release_discovery(series_title, issue_number);
+CREATE INDEX IF NOT EXISTS pending_release_watches_volume_index
+    ON pending_release_watches(volume_id);
 """

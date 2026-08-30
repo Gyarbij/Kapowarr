@@ -89,6 +89,13 @@ noscript {
 	--nav-background-color: var(--dark-color);
 	--nav-color: var(--light-color);
 	--volume-info-background-color: var(--dark-color);
+
+	--border-radius: 4px;
+	--background-primary: var(--background-color);
+	--background-secondary: var(--foreground-color);
+	--background-tertiary: var(--hover-color);
+	--text-secondary: var(--dimmed-text-color);
+	--text-tertiary: var(--dimmed-text-color);
 }
 
 :root.dark-mode {
@@ -113,6 +120,12 @@ noscript {
 	--nav-background-color: var(--gray-color);
 	--nav-color: var(--light-color);
 	--volume-info-background-color: var(--dark-color);
+
+	--background-primary: var(--background-color);
+	--background-secondary: var(--foreground-color);
+	--background-tertiary: var(--hover-color);
+	--text-secondary: var(--dimmed-text-color);
+	--text-tertiary: var(--dimmed-text-color);
 }
 
 ::-webkit-scrollbar {
@@ -305,7 +318,8 @@ nav svg {
 
 main {
 	height: calc(100dvh - var(--header-height));
-	width: 100%;
+	min-width: 0;
+	flex: 1 1 0;
 
 	display: flex;
 	flex-direction: column;

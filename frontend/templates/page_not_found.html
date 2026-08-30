@@ -11,8 +11,14 @@
 	<link rel="stylesheet" href="{{ url_for('static', filename='css/page_not_found.css') }}">
 
 	<script>
-		if (JSON.parse(localStorage.getItem('kapowarr') || {'theme': 'light'})['theme'] === 'dark')
+		const storedTheme = JSON.parse(localStorage.getItem('kapowarr') || {'theme': 'light'})['theme'];
+		if (storedTheme === 'dark')
 			document.querySelector(':root').classList.add('dark-mode');
+		else if (storedTheme === 'system') {
+			const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+			if (prefersDark)
+				document.querySelector(':root').classList.add('dark-mode');
+		}
 	</script>
 
 	<title>Not found - Kapowarr</title>

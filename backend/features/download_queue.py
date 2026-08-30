@@ -2,40 +2,61 @@
 
 from __future__ import annotations
 
-from asyncio import gather, run
+from asyncio import run
 from os import listdir
 from os.path import basename, join
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Tuple, Type, Union
 
 from typing_extensions import assert_never
 
-from backend.base.custom_exceptions import (ClientNotWorking,
-                                            DownloadLimitReached,
-                                            DownloadNotFound,
-                                            DownloadUnmovable,
-                                            EnqueuingDownloadFailure,
-                                            InvalidKeyValue, IssueNotFound,
-                                            LinkBroken)
-from backend.base.definitions import (BlocklistReason, Constants, Download,
-                                      DownloadSource, DownloadState,
-                                      EnqueuingDownloadFailureReason,
-                                      ExternalDownload, SeedingHandling)
+from backend.base.custom_exceptions import (
+    ClientNotWorking,
+    DownloadLimitReached,
+    DownloadNotFound,
+    DownloadUnmovable,
+    EnqueuingDownloadFailure,
+    InvalidKeyValue,
+    IssueNotFound,
+    LinkBroken,
+)
+from backend.base.definitions import (
+    BlocklistReason,
+    Constants,
+    Download,
+    DownloadSource,
+    DownloadState,
+    EnqueuingDownloadFailureReason,
+    ExternalDownload,
+    SeedingHandling,
+)
 from backend.base.files import create_folder, delete_file_folder
 from backend.base.helpers import CommaList, Singleton, get_subclasses
 from backend.base.logging import LOGGER
-from backend.features.post_processing import (PostProcessor,
-                                              PostProcessorTorrentsComplete,
-                                              PostProcessorTorrentsCopy)
-from backend.implementations.blocklist import add_to_blocklist
-from backend.implementations.download_clients import (BaseDirectDownload,
-                                                      MegaDownload,
-                                                      TorrentDownload)
+from backend.features.post_processing import (
+    PostProcessor,
+    PostProcessorTorrentsComplete,
+    PostProcessorTorrentsCopy,
+)
+from backend.implementations.blocklist import (
+    add_to_blocklist,
+    clear_automatic_blocklist,
+)
+from backend.implementations.download_clients import (
+    BaseDirectDownload,
+    MegaDownload,
+    TorrentDownload,
+)
 from backend.implementations.external_clients import ExternalClients
 from backend.implementations.getcomics import GetComicsPage
 from backend.implementations.volumes import Issue
 from backend.internals.db import get_db, iter_commit
-from backend.internals.server import (AddedToQueueEvent, QueueStatusEvent,
-                                      RemovedFromQueueEvent, Server, WebSocket)
+from backend.internals.server import (
+    AddedToQueueEvent,
+    QueueStatusEvent,
+    RemovedFromQueueEvent,
+    Server,
+    WebSocket,
+)
 from backend.internals.settings import Settings
 
 if TYPE_CHECKING:
@@ -434,16 +455,17 @@ class DownloadHandler(metaclass=Singleton):
                 await gcp.load_data()
 
             except EnqueuingDownloadFailure as e:
-                add_to_blocklist(
-                    web_link=link,
-                    web_title=None,
-                    web_sub_title=None,
-                    download_link=None,
-                    source=None,
-                    volume_id=volume_id,
-                    issue_id=issue_id,
-                    reason=BlocklistReason.LINK_BROKEN
-                )
+                if e.reason == EnqueuingDownloadFailureReason.WEBPAGE_BROKEN:
+                    add_to_blocklist(
+                        web_link=link,
+                        web_title=None,
+                        web_sub_title=None,
+                        download_link=None,
+                        source=None,
+                        volume_id=volume_id,
+                        issue_id=issue_id,
+                        reason=BlocklistReason.LINK_BROKEN
+                    )
                 LOGGER.warning(
                     f'Unable to extract download links from source; fail_reason="{e.reason.value}"'
                 )
@@ -472,6 +494,8 @@ class DownloadHandler(metaclass=Singleton):
                 )
                 return [], e.reason
 
+            clear_automatic_blocklist(link)
+
         result = self.__prepare_downloads_for_queue(
             downloads,
             forced_match=force_match
@@ -484,15 +508,17 @@ class DownloadHandler(metaclass=Singleton):
     def add_multiple(
         self,
         add_args: Iterable[Tuple[str, int, Union[int, None], bool]]
-    ) -> None:
+    ) -> List[Tuple[
+        List[dict],
+        Union[EnqueuingDownloadFailureReason, None]
+    ]]:
         async def add_wrapper():
-            await gather(
-                *(self.add(*entry)
-                for entry in add_args)
-            )
+            return [
+                await self.add(*entry)
+                for entry in add_args
+            ]
 
-        run(add_wrapper())
-        return
+        return list(run(add_wrapper()))
 
     def __load_downloads(self) -> None:
         """
