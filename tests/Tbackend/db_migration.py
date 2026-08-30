@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from backend.internals import db_migration
-from backend.internals.db import DB_SCHEMA
+from backend.internals.db import DB_SCHEMA, DB_SCHEMA_INDEXES
 
 
 class DatabaseMigrationReconciliationTest(unittest.TestCase):
@@ -37,6 +37,7 @@ class DatabaseMigrationReconciliationTest(unittest.TestCase):
             CREATE TABLE issues (
                 id INTEGER PRIMARY KEY,
                 volume_id INTEGER NOT NULL,
+                calculated_issue_number REAL NOT NULL DEFAULT 0,
                 monitored BOOL NOT NULL DEFAULT 1
             );
             CREATE TABLE issues_files (
@@ -128,8 +129,58 @@ class DatabaseMigrationReconciliationTest(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(count, 2)
 
+    def test_startup_schema_allows_legacy_cache_before_migration(self):
+        self.connection.executescript("""
+            CREATE TABLE release_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                issue_cv_id INTEGER NOT NULL UNIQUE,
+                volume_cv_id INTEGER NOT NULL,
+                volume_title TEXT NOT NULL,
+                issue_number TEXT NOT NULL,
+                calculated_issue_number REAL,
+                store_date TEXT,
+                cover_date TEXT,
+                cover_url TEXT,
+                publisher TEXT,
+                fetched_at INTEGER NOT NULL
+            );
+            CREATE TABLE publisher_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                comicvine_id INTEGER NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                site_url TEXT,
+                volume_count INTEGER DEFAULT 0,
+                fetched_at INTEGER NOT NULL
+            );
+        """)
+
+        self.connection.executescript(DB_SCHEMA)
+        with patch.object(
+            db_migration,
+            'get_db',
+            return_value=self.connection
+        ):
+            db_migration._migrate_reconcile_divergent_version_44()
+            db_migration._migrate_source_aware_metadata_cache()
+        self.connection.executescript(DB_SCHEMA_INDEXES)
+
+        self.assertIn('metadata_source', self._columns('release_cache'))
+        indexes = {
+            row[1]
+            for row in self.connection.execute(
+                'PRAGMA index_list(release_cache);'
+            )
+        }
+        self.assertIn('release_cache_source_date_index', indexes)
+
+    def test_startup_schema_allows_missing_created_at_before_migration(self):
+        self._create_common_tables(forced=True)
+
+        self.connection.executescript(DB_SCHEMA)
+
     def test_fresh_schema_contains_current_metadata_cache(self):
         self.connection.executescript(DB_SCHEMA)
+        self.connection.executescript(DB_SCHEMA_INDEXES)
 
         self.assertIn('store_date', self._columns('issues'))
         issue_columns = [

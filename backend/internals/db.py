@@ -365,6 +365,7 @@ def setup_db() -> None:
     set_log_level(settings_values.log_level)
 
     DatabaseMigrationHandler.migrate()
+    cursor.executescript(DB_SCHEMA_INDEXES)
 
     # Generate api key
     if not settings_values.api_key:
@@ -435,8 +436,6 @@ CREATE INDEX IF NOT EXISTS volumes_publisher_sort_index
     ON volumes(publisher, title, year, volume_number);
 CREATE INDEX IF NOT EXISTS volumes_monitored_index
     ON volumes(monitored);
-CREATE INDEX IF NOT EXISTS volumes_created_at_index
-    ON volumes(created_at);
 CREATE TABLE IF NOT EXISTS issues(
     id INTEGER PRIMARY KEY,
     volume_id INTEGER NOT NULL,
@@ -600,8 +599,6 @@ CREATE TABLE IF NOT EXISTS release_cache(
     fetched_at INTEGER NOT NULL,
     UNIQUE(metadata_source, issue_cv_id)
 );
-CREATE INDEX IF NOT EXISTS release_cache_source_date_index
-    ON release_cache(metadata_source, store_date, cover_date);
 CREATE TABLE IF NOT EXISTS release_cache_windows(
     metadata_source VARCHAR(30) NOT NULL,
     start_date VARCHAR(10) NOT NULL,
@@ -610,8 +607,6 @@ CREATE TABLE IF NOT EXISTS release_cache_windows(
     expires_at INTEGER NOT NULL,
     PRIMARY KEY(metadata_source, start_date, end_date)
 );
-CREATE INDEX IF NOT EXISTS release_cache_windows_expiry_index
-    ON release_cache_windows(metadata_source, expires_at);
 CREATE TABLE IF NOT EXISTS publisher_cache(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     metadata_source VARCHAR(30) NOT NULL,
@@ -622,8 +617,6 @@ CREATE TABLE IF NOT EXISTS publisher_cache(
     fetched_at INTEGER NOT NULL,
     UNIQUE(metadata_source, comicvine_id)
 );
-CREATE INDEX IF NOT EXISTS publisher_cache_source_name_index
-    ON publisher_cache(metadata_source, name);
 CREATE TABLE IF NOT EXISTS metadata_response_cache(
     metadata_source VARCHAR(30) NOT NULL,
     resource VARCHAR(50) NOT NULL,
@@ -633,6 +626,17 @@ CREATE TABLE IF NOT EXISTS metadata_response_cache(
     expires_at INTEGER NOT NULL,
     PRIMARY KEY(metadata_source, resource, cache_key)
 );
+"""
+
+DB_SCHEMA_INDEXES = """
+CREATE INDEX IF NOT EXISTS volumes_created_at_index
+    ON volumes(created_at);
+CREATE INDEX IF NOT EXISTS release_cache_source_date_index
+    ON release_cache(metadata_source, store_date, cover_date);
+CREATE INDEX IF NOT EXISTS release_cache_windows_expiry_index
+    ON release_cache_windows(metadata_source, expires_at);
+CREATE INDEX IF NOT EXISTS publisher_cache_source_name_index
+    ON publisher_cache(metadata_source, name);
 CREATE INDEX IF NOT EXISTS metadata_response_cache_expiry_index
     ON metadata_response_cache(metadata_source, resource, expires_at);
 """
