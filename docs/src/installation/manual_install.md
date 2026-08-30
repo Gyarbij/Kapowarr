@@ -5,7 +5,7 @@ On this page, you can find instructions on how to manually install Kapowarr (dir
 === "Linux"
     ### Linux
 
-    1. Install Python 3.8 or higher if you don't have it already.
+    1. Install Python 3.9 or higher if you don't have it already.
 
     ```bash
     sudo apt-get install python3
@@ -64,7 +64,7 @@ On this page, you can find instructions on how to manually install Kapowarr (dir
 
     Make sure you are logged in to your MacOS device as an admin user.
 
-    1. Install Python 3.8 or higher if you don't have it already. You can install Python 3.14 from [this link](https://www.python.org/ftp/python/3.14.3/python-3.14.3-macos11.pkg).
+    1. Install Python 3.9 or higher if you don't have it already. You can install Python 3.14 from [this link](https://www.python.org/ftp/python/3.14.3/python-3.14.3-macos11.pkg).
 
     2. Download the latest Kapowarr release from [this link](https://github.com/Casvt/Kapowarr/releases/latest/download/Kapowarr-release.zip) and expand the downloaded .zip file.
 
@@ -93,7 +93,7 @@ On this page, you can find instructions on how to manually install Kapowarr (dir
 === "Windows"
     ### Windows
 
-    1. Install Python 3.8 or higher if you don't have it already. You can download the Windows Python installer using [this link](https://www.python.org/ftp/python/pymanager/python-manager-26.0.msix). Make sure to check the box to add Python to PATH when prompted.
+    1. Install Python 3.9 or higher if you don't have it already. You can download the Windows Python installer using [this link](https://www.python.org/ftp/python/pymanager/python-manager-26.0.msix). Make sure to check the box to add Python to PATH when prompted.
 
     2. Download the latest Kapowarr release from [this link](https://github.com/Casvt/Kapowarr/releases/latest/download/Kapowarr-release.zip).
 

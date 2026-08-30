@@ -9,8 +9,21 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from enum import Enum
 from threading import Event, Thread
-from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Mapping,
-                    Sequence, Tuple, TypedDict, TypeVar, Union)
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Sequence,
+    Tuple,
+    TypedDict,
+    TypeVar,
+    Union,
+)
+
+from typing_extensions import NotRequired
 
 if TYPE_CHECKING:
     from backend.base.helpers import AsyncSession
@@ -23,7 +36,7 @@ FileConverter = Callable[[str], List[str]]
 
 # region Constants
 class Constants:
-    MIN_PYTHON_VERSION = (3, 8, 0)
+    MIN_PYTHON_VERSION = (3, 9, 0)
     "The minimum Python version allowed"
 
     SUB_PROCESS_TIMEOUT = 20.0 # seconds
@@ -404,9 +417,13 @@ class LibraryFilter(BaseEnum):
     RECENTLY_ADDED_7 = "recently_added_7"
     RECENTLY_ADDED_30 = "recently_added_30"
     RECENTLY_ADDED_90 = "recently_added_90"
+    RECENTLY_ADDED_180 = "recently_added_180"
+    RECENTLY_ADDED_365 = "recently_added_365"
     RECENTLY_RELEASED_7 = "recently_released_7"
     RECENTLY_RELEASED_30 = "recently_released_30"
     RECENTLY_RELEASED_90 = "recently_released_90"
+    RECENTLY_RELEASED_180 = "recently_released_180"
+    RECENTLY_RELEASED_365 = "recently_released_365"
     HAS_DESCRIPTION = "has_description"
 
 
@@ -663,6 +680,7 @@ class NewReleaseMetadata(TypedDict):
     cover_url: Union[str, None]
     publisher: Union[str, None]
     in_library: bool
+    metadata_source: NotRequired[str]
     volume_id: Union[int, None]  # Local volume ID if in library
 
 

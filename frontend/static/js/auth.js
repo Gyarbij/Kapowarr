@@ -1,10 +1,17 @@
+let apiKeyRequest = null;
+
 async function usingApiKey(redirect=true) {
-	const key_data = JSON.parse(localStorage.getItem('kapowarr'));
+	const key_data = JSON.parse(localStorage.getItem('kapowarr')) || {
+		api_key: null,
+		last_login: 0
+	};
 
 	if (key_data.api_key === null
 	|| (key_data.last_login < (Date.now() / 1000 - 86400))) {
+		if (apiKeyRequest !== null)
+			return apiKeyRequest;
 
-		return fetch(`${url_base}/api/auth`, {
+		apiKeyRequest = fetch(`${url_base}/api/auth`, {
 			'method': 'POST',
 			'headers': {'Content-Type': 'application/json'},
 			'body': '{}'
@@ -28,6 +35,8 @@ async function usingApiKey(redirect=true) {
 					return null;
 				};
 			})
+			.finally(() => apiKeyRequest = null);
+		return apiKeyRequest;
 
 	} else {
 		return key_data.api_key;

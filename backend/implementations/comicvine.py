@@ -13,18 +13,37 @@ from aiohttp import ContentTypeError
 from aiohttp.client_exceptions import ClientError
 from bs4 import BeautifulSoup, Tag
 
-from backend.base.custom_exceptions import (CVRateLimitReached,
-                                            InvalidComicVineApiKey,
-                                            VolumeNotMatched)
-from backend.base.definitions import (Constants, FilenameData,
-                                      IssueMetadata, NewReleaseMetadata,
-                                      PublisherMetadata, T, VolumeMetadata)
-from backend.base.file_extraction import (extract_issue_number,
-                                          extract_volume_number, volume_regex)
-from backend.base.helpers import (AsyncSession, Session, batched,
-                                  first_of_range, force_range, force_suffix,
-                                  normalise_string, normalise_year,
-                                  to_full_string_cv_id, to_string_cv_id)
+from backend.base.custom_exceptions import (
+    CVRateLimitReached,
+    InvalidComicVineApiKey,
+    VolumeNotMatched,
+)
+from backend.base.definitions import (
+    Constants,
+    FilenameData,
+    IssueMetadata,
+    NewReleaseMetadata,
+    PublisherMetadata,
+    T,
+    VolumeMetadata,
+)
+from backend.base.file_extraction import (
+    extract_issue_number,
+    extract_volume_number,
+    volume_regex,
+)
+from backend.base.helpers import (
+    AsyncSession,
+    Session,
+    batched,
+    first_of_range,
+    force_range,
+    force_suffix,
+    normalise_string,
+    normalise_year,
+    to_full_string_cv_id,
+    to_string_cv_id,
+)
 from backend.base.logging import LOGGER
 from backend.implementations.matching import select_best_volume_result_for_file
 from backend.internals.db import get_db
@@ -716,6 +735,41 @@ class ComicVine:
 
         return self.__format_search_output(results)
 
+    async def __get_paginated_results(
+        self,
+        session: AsyncSession,
+        url_path: str,
+        params: Dict[str, Any],
+        limit: int
+    ) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        offset = 0
+        while len(results) < limit:
+            page_limit = min(100, limit - len(results))
+            try:
+                response = await self.__call_api(
+                    session,
+                    url_path,
+                    {**params, 'limit': page_limit, 'offset': offset}
+                )
+            except CVRateLimitReached:
+                LOGGER.warning(
+                    'ComicVine rate limit reached after %d results',
+                    len(results)
+                )
+                raise
+
+            page = response.get('results', [])
+            if not page:
+                break
+            results.extend(page)
+            offset += len(page)
+            total = int(response.get('number_of_total_results', offset))
+            if offset >= total or len(page) < page_limit:
+                break
+
+        return results
+
     async def get_new_releases(
         self,
         start_date: str,
@@ -748,21 +802,21 @@ class ComicVine:
         releases: List[NewReleaseMetadata] = []
         async with AsyncSession() as session:
             try:
-                results = await self.__call_api(
+                results = await self.__get_paginated_results(
                     session,
                     '/issues',
                     {
                         'field_list': self.new_release_field_list,
                         'filter': f'store_date:{start_date}|{end_date}',
-                        'sort': 'store_date:desc',
-                        'limit': min(limit, 100)
-                    }
+                        'sort': 'store_date:desc'
+                    },
+                    limit
                 )
             except CVRateLimitReached:
                 LOGGER.warning('Rate limit reached while fetching new releases')
-                return releases
+                raise
 
-            for issue in results.get('results', []):
+            for issue in results:
                 volume_data = issue.get('volume', {})
                 volume_cv_id = int(volume_data.get('id', 0))
                 issue_number = issue.get('issue_number', '0')
@@ -853,19 +907,19 @@ class ComicVine:
         publishers: List[PublisherMetadata] = []
         async with AsyncSession() as session:
             try:
-                results = await self.__call_api(
+                results = await self.__get_paginated_results(
                     session,
                     '/publishers',
                     {
-                        'field_list': self.publisher_field_list,
-                        'limit': min(limit, 100)
-                    }
+                        'field_list': self.publisher_field_list
+                    },
+                    limit
                 )
             except CVRateLimitReached:
                 LOGGER.warning('Rate limit reached while fetching publishers')
-                return publishers
+                raise
 
-            for pub in results.get('results', []):
+            for pub in results:
                 publisher: PublisherMetadata = {
                     'comicvine_id': int(pub['id']),
                     'name': pub['name'],
@@ -900,24 +954,24 @@ class ComicVine:
 
         async with AsyncSession() as session:
             try:
-                results = await self.__call_api(
+                results = await self.__get_paginated_results(
                     session,
                     '/volumes',
                     {
                         'field_list': self.search_field_list,
                         'filter': f'publisher:{publisher_cv_id}',
-                        'sort': 'date_last_updated:desc',
-                        'limit': min(limit, 100)
-                    }
+                        'sort': 'date_last_updated:desc'
+                    },
+                    limit
                 )
             except CVRateLimitReached:
                 LOGGER.warning('Rate limit reached while fetching publisher volumes')
+                raise
+
+            if not results:
                 return []
 
-            if not results.get('results'):
-                return []
-
-            return self.__format_search_output(results['results'])
+            return self.__format_search_output(results)
 
     async def filenames_to_cvs(
         self,

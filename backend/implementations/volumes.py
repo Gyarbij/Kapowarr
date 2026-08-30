@@ -17,23 +17,42 @@ from typing import Any, Dict, List, Mapping, Set, Tuple, Union
 
 from typing_extensions import assert_never
 
-from backend.base.custom_exceptions import (InvalidKeyValue, IssueNotFound,
-                                            KeyNotFound, TaskForVolumeRunning,
-                                            VolumeAlreadyAdded,
-                                            VolumeDownloadedFor,
-                                            VolumeNotFound)
-from backend.base.definitions import (BaseEnum, Constants, FileData,
-                                      GeneralFileData, IssueData,
-                                      LibraryFilter, LibrarySorting,
-                                      MonitorScheme, SpecialVersion,
-                                      VolumeData)
-from backend.base.files import (change_basefolder, create_folder,
-                                delete_empty_child_folders,
-                                delete_empty_parent_folders,
-                                delete_file_folder, folder_is_inside_folder,
-                                rename_file)
-from backend.base.helpers import (PortablePool, extract_year_from_date,
-                                  first_of_subarrays, to_number_cv_id)
+from backend.base.custom_exceptions import (
+    InvalidKeyValue,
+    IssueNotFound,
+    KeyNotFound,
+    TaskForVolumeRunning,
+    VolumeAlreadyAdded,
+    VolumeDownloadedFor,
+    VolumeNotFound,
+)
+from backend.base.definitions import (
+    BaseEnum,
+    Constants,
+    FileData,
+    GeneralFileData,
+    IssueData,
+    LibraryFilter,
+    LibrarySorting,
+    MonitorScheme,
+    SpecialVersion,
+    VolumeData,
+)
+from backend.base.files import (
+    change_basefolder,
+    create_folder,
+    delete_empty_child_folders,
+    delete_empty_parent_folders,
+    delete_file_folder,
+    folder_is_inside_folder,
+    rename_file,
+)
+from backend.base.helpers import (
+    PortablePool,
+    extract_year_from_date,
+    first_of_subarrays,
+    to_number_cv_id,
+)
 from backend.base.logging import LOGGER
 from backend.implementations.comicvine import ComicVine
 from backend.implementations.file_matching import scan_files
@@ -42,8 +61,7 @@ from backend.implementations.matching import match_title
 from backend.implementations.root_folders import RootFolders
 from backend.internals.db import commit, get_db
 from backend.internals.db_models import FilesDB, GeneralFilesDB
-from backend.internals.server import (DownloadedStatusEvent,
-                                      TaskStatusEvent, WebSocket)
+from backend.internals.server import DownloadedStatusEvent, TaskStatusEvent, WebSocket
 from backend.internals.settings import Settings
 
 # autopep8: off
@@ -987,6 +1005,14 @@ class Library:
             clauses.append("created_at >= ?")
             params.append(round(time()) - 90 * 24 * 60 * 60)
 
+        elif filter == LibraryFilter.RECENTLY_ADDED_180:
+            clauses.append("created_at >= ?")
+            params.append(round(time()) - 180 * 24 * 60 * 60)
+
+        elif filter == LibraryFilter.RECENTLY_ADDED_365:
+            clauses.append("created_at >= ?")
+            params.append(round(time()) - 365 * 24 * 60 * 60)
+
         elif filter == LibraryFilter.RECENTLY_RELEASED_7:
             clauses.append("""EXISTS (
                 SELECT 1 FROM issues
@@ -1012,6 +1038,24 @@ class Library:
                     AND date IS NOT NULL
                     AND date != ''
                     AND date(date) >= date('now', '-90 days')
+            )""")
+
+        elif filter == LibraryFilter.RECENTLY_RELEASED_180:
+            clauses.append("""EXISTS (
+                SELECT 1 FROM issues
+                WHERE volume_id = volumes.id
+                    AND date IS NOT NULL
+                    AND date != ''
+                    AND date(date) >= date('now', '-180 days')
+            )""")
+
+        elif filter == LibraryFilter.RECENTLY_RELEASED_365:
+            clauses.append("""EXISTS (
+                SELECT 1 FROM issues
+                WHERE volume_id = volumes.id
+                    AND date IS NOT NULL
+                    AND date != ''
+                    AND date(date) >= date('now', '-365 days')
             )""")
 
         elif filter == LibraryFilter.HAS_DESCRIPTION:

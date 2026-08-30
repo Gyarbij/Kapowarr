@@ -13,8 +13,12 @@ from typing import Dict, List, Tuple, Type, Union
 
 from flask import Flask
 
-from backend.base.custom_exceptions import (InvalidComicVineApiKey,
-                                            TaskNotDeletable, TaskNotFound)
+from backend.base.custom_exceptions import (
+    CredentialInvalid,
+    InvalidComicVineApiKey,
+    TaskNotDeletable,
+    TaskNotFound,
+)
 from backend.base.helpers import Singleton, get_subclasses
 from backend.base.logging import LOGGER
 from backend.features.download_queue import DownloadHandler
@@ -23,8 +27,12 @@ from backend.implementations.conversion import mass_convert
 from backend.implementations.naming import mass_rename
 from backend.implementations.volumes import Volume, refresh_and_scan
 from backend.internals.db import close_db, get_db
-from backend.internals.server import (TaskAddedEvent, TaskEndedEvent,
-                                      TaskStatusEvent, WebSocket)
+from backend.internals.server import (
+    TaskAddedEvent,
+    TaskEndedEvent,
+    TaskStatusEvent,
+    WebSocket,
+)
 from backend.internals.settings import Settings
 
 
@@ -512,15 +520,16 @@ class RefreshReleaseCache(Task):
     def run(self) -> None:
         from asyncio import run as async_run
         from datetime import datetime, timedelta
-        from time import time as current_time
 
+        from backend.implementations.metadata_cache import MetadataCache
         from backend.implementations.metadata_sources import (
-            MetadataSourceType, get_metadata_source)
+            MetadataSourceType,
+            get_metadata_source,
+        )
 
         self.message = 'Refreshing release cache'
         WebSocket().emit(TaskStatusEvent(self.message))
 
-        cursor = get_db(force_new=True)
         source_value = Settings().sv.metadata_source or MetadataSourceType.COMICVINE.value
         try:
             source_type = MetadataSourceType(source_value)
@@ -529,80 +538,36 @@ class RefreshReleaseCache(Task):
                 f'Invalid metadata_source setting "{source_value}", falling back to comicvine'
             )
             source_type = MetadataSourceType.COMICVINE
-        source = get_metadata_source(source_type)
-        now = current_time()
 
         try:
-            # Get recent releases (last 14 days)
+            source = get_metadata_source(source_type)
+            cache = MetadataCache(source)
             self.message = 'Fetching recent releases'
             WebSocket().emit(TaskStatusEvent(self.message))
 
             today = datetime.now()
-            past = (today - timedelta(days=14)).strftime('%Y-%m-%d')
-            future = (today + timedelta(days=30)).strftime('%Y-%m-%d')
+            past = (today - timedelta(days=30)).strftime('%Y-%m-%d')
+            future = (today + timedelta(days=90)).strftime('%Y-%m-%d')
 
-            # Fetch recent and upcoming in one call
-            releases = async_run(source.get_new_releases(past, future))
-
-            # Clear old cache entries (older than 24 hours)
-            cursor.execute(
-                "DELETE FROM release_cache WHERE fetched_at < ?;",
-                (now - 86400,)
-            )
-
-            # Insert new releases
-            for release in releases:
-                cursor.execute(
-                    """
-                    INSERT OR REPLACE INTO release_cache (
-                        issue_cv_id, volume_cv_id, volume_title,
-                        issue_number, calculated_issue_number,
-                        store_date, cover_date, cover_url,
-                        publisher, fetched_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                    """,
-                    (
-                        release['issue_cv_id'],
-                        release['volume_cv_id'],
-                        release['volume_title'],
-                        release['issue_number'],
-                        release['calculated_issue_number'],
-                        release['store_date'],
-                        release['cover_date'],
-                        release['cover_url'],
-                        release['publisher'],
-                        round(now)
-                    )
-                )
+            releases = async_run(cache.get_releases(
+                past,
+                future,
+                limit=MetadataCache.RELEASE_FETCH_LIMIT
+            ))
 
             LOGGER.info(f'Refreshed release cache with {len(releases)} releases')
 
-            # Also refresh publisher cache
             self.message = 'Fetching publishers'
             WebSocket().emit(TaskStatusEvent(self.message))
 
-            publishers = async_run(source.get_publishers(limit=100))
-
-            for pub in publishers:
-                cursor.execute(
-                    """
-                    INSERT OR REPLACE INTO publisher_cache (
-                        comicvine_id, name, site_url, volume_count, fetched_at
-                    ) VALUES (?, ?, ?, ?, ?);
-                    """,
-                    (
-                        pub['comicvine_id'],
-                        pub['name'],
-                        pub['site_url'],
-                        pub['volume_count'],
-                        round(now)
-                    )
-                )
+            publishers = async_run(cache.get_publishers(limit=100))
 
             LOGGER.info(f'Refreshed publisher cache with {len(publishers)} publishers')
 
-        except InvalidComicVineApiKey:
-            LOGGER.warning('Invalid API key, skipping release cache refresh')
+        except (CredentialInvalid, InvalidComicVineApiKey):
+            LOGGER.warning(
+                'Invalid metadata credentials, skipping release cache refresh'
+            )
 
         return
 

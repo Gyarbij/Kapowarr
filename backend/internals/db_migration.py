@@ -246,8 +246,7 @@ def _migrate_add_custom_folder():
 
 @DatabaseMigrationHandler.register_handler(7)
 def _migrate_add_special_version():
-    from backend.implementations.volumes import (Library,
-                                                 determine_special_version)
+    from backend.implementations.volumes import Library, determine_special_version
 
     cursor = get_db()
     cursor.execute("""
@@ -324,8 +323,7 @@ def _migrate_update_manifest():
 
 @DatabaseMigrationHandler.register_handler(10)
 def _migrate_update_special_version():
-    from backend.implementations.volumes import (Library,
-                                                 determine_special_version)
+    from backend.implementations.volumes import Library, determine_special_version
 
     updates = (
         (
@@ -1276,5 +1274,73 @@ def _migrate_reconcile_divergent_version_44():
                 f"ALTER TABLE {table} ADD COLUMN "
                 "forced BOOL NOT NULL DEFAULT 0;"
             )
+
+    return
+
+
+@DatabaseMigrationHandler.register_handler(47)
+def _migrate_source_aware_metadata_cache():
+    get_db().executescript("""
+        DROP TABLE IF EXISTS release_cache;
+        DROP TABLE IF EXISTS release_cache_windows;
+        DROP TABLE IF EXISTS publisher_cache;
+        DROP TABLE IF EXISTS metadata_response_cache;
+
+        CREATE TABLE release_cache(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            metadata_source VARCHAR(30) NOT NULL,
+            issue_cv_id INTEGER NOT NULL,
+            volume_cv_id INTEGER NOT NULL,
+            volume_title TEXT NOT NULL,
+            issue_number TEXT NOT NULL,
+            calculated_issue_number REAL,
+            store_date VARCHAR(10),
+            cover_date VARCHAR(10),
+            cover_url TEXT,
+            publisher TEXT,
+            fetched_at INTEGER NOT NULL,
+            UNIQUE(metadata_source, issue_cv_id)
+        );
+        CREATE INDEX release_cache_source_date_index
+            ON release_cache(metadata_source, store_date, cover_date);
+
+        CREATE TABLE release_cache_windows(
+            metadata_source VARCHAR(30) NOT NULL,
+            start_date VARCHAR(10) NOT NULL,
+            end_date VARCHAR(10) NOT NULL,
+            fetched_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            PRIMARY KEY(metadata_source, start_date, end_date)
+        );
+        CREATE INDEX release_cache_windows_expiry_index
+            ON release_cache_windows(metadata_source, expires_at);
+
+        CREATE TABLE publisher_cache(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            metadata_source VARCHAR(30) NOT NULL,
+            comicvine_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            site_url TEXT,
+            volume_count INTEGER DEFAULT 0,
+            fetched_at INTEGER NOT NULL,
+            UNIQUE(metadata_source, comicvine_id)
+        );
+        CREATE INDEX publisher_cache_source_name_index
+            ON publisher_cache(metadata_source, name);
+
+        CREATE TABLE metadata_response_cache(
+            metadata_source VARCHAR(30) NOT NULL,
+            resource VARCHAR(50) NOT NULL,
+            cache_key TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            fetched_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            PRIMARY KEY(metadata_source, resource, cache_key)
+        );
+        CREATE INDEX metadata_response_cache_expiry_index
+            ON metadata_response_cache(
+                metadata_source, resource, expires_at
+            );
+    """)
 
     return

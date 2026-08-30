@@ -1,46 +1,64 @@
 # -*- coding: utf-8 -*-
 
 from asyncio import run
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Any, Dict, List, Tuple, Type, Union
 
 from flask import Blueprint, request, send_file
 
-from backend.base.custom_exceptions import (InvalidKeyValue,
-                                            KeyNotFound, TaskNotFound)
-from backend.base.definitions import (BlocklistReason, BlocklistReasonID,
-                                      CredentialData, CredentialSource,
-                                      DownloadSource, FileMatch,
-                                      KapowarrException, LibraryFilter,
-                                      LibrarySorting, MonitorScheme,
-                                      SpecialVersion, StartType, VolumeData)
+from backend.base.custom_exceptions import InvalidKeyValue, KeyNotFound, TaskNotFound
+from backend.base.definitions import (
+    BlocklistReason,
+    BlocklistReasonID,
+    CredentialData,
+    CredentialSource,
+    DownloadSource,
+    FileMatch,
+    KapowarrException,
+    LibraryFilter,
+    LibrarySorting,
+    MonitorScheme,
+    SpecialVersion,
+    StartType,
+    VolumeData,
+)
 from backend.base.helpers import hash_credential
 from backend.base.logging import LOGGER, get_log_file_contents
-from backend.features.download_queue import (DownloadHandler,
-                                             delete_download_history,
-                                             get_download_history)
-from backend.features.library_import import (import_library,
-                                             propose_library_import)
+from backend.features.download_queue import (
+    DownloadHandler,
+    delete_download_history,
+    get_download_history,
+)
+from backend.features.library_import import import_library, propose_library_import
 from backend.features.mass_edit import run_mass_editor_action
 from backend.features.search import manual_search
-from backend.features.tasks import (Task, TaskHandler,
-                                    delete_task_history, get_task_history,
-                                    get_task_planning, task_library)
-from backend.implementations.blocklist import (add_to_blocklist,
-                                               delete_blocklist,
-                                               delete_blocklist_entry,
-                                               get_blocklist,
-                                               get_blocklist_entry)
+from backend.features.tasks import (
+    Task,
+    TaskHandler,
+    delete_task_history,
+    get_task_history,
+    get_task_planning,
+    task_library,
+)
+from backend.implementations.blocklist import (
+    add_to_blocklist,
+    delete_blocklist,
+    delete_blocklist_entry,
+    get_blocklist,
+    get_blocklist_entry,
+)
 from backend.implementations.comicvine import ComicVine
 from backend.implementations.conversion import preview_mass_convert
 from backend.implementations.converters import ConvertersManager
 from backend.implementations.credentials import Credentials
 from backend.implementations.external_clients import ExternalClients
-from backend.implementations.file_matching import (get_file_matching,
-                                                   set_file_matching)
-from backend.implementations.naming import (generate_volume_folder_name,
-                                            preview_mass_rename)
+from backend.implementations.file_matching import get_file_matching, set_file_matching
+from backend.implementations.metadata_cache import MetadataCache
+from backend.implementations.naming import (
+    generate_volume_folder_name,
+    preview_mass_rename,
+)
 from backend.implementations.remote_mapping import RemoteMappings
 from backend.implementations.root_folders import RootFolders
 from backend.implementations.volumes import Library, delete_issue_file
@@ -61,8 +79,10 @@ def return_api(
 
 
 def _get_configured_metadata_source():
-    from backend.implementations.metadata_sources import (MetadataSourceType,
-                                                          get_metadata_source)
+    from backend.implementations.metadata_sources import (
+        MetadataSourceType,
+        get_metadata_source,
+    )
 
     source_value = Settings().sv.metadata_source or MetadataSourceType.COMICVINE.value
     try:
@@ -370,7 +390,7 @@ def api_tasks():
             kwargs['filepath_filter'] = filepath_filter or []
 
         if task.action == 'update_all':
-            allow_skipping = data.get('allow_skipping', True)
+            allow_skipping = data.get('allow_skipping', False)
             if not isinstance(allow_skipping, bool):
                 raise InvalidKeyValue('allow_skipping', allow_skipping)
             kwargs['allow_skipping'] = allow_skipping
@@ -1127,6 +1147,44 @@ def api_rename_issue(id: int):
 # =====================
 
 
+def _metadata_int_param(
+    key: str,
+    default: int,
+    maximum: int = 5000
+) -> int:
+    value = extract_key(request, key, False)
+    if value is None:
+        return default
+    try:
+        value = int(value)
+    except (TypeError, ValueError) as exc:
+        raise InvalidKeyValue(key, value) from exc
+    if not 1 <= value <= maximum:
+        raise InvalidKeyValue(key, value)
+    return value
+
+
+def _force_metadata_refresh() -> bool:
+    value = extract_key(request, 'force_refresh', False)
+    if value is None:
+        return False
+    if value not in ('true', 'false', '1', '0'):
+        raise InvalidKeyValue('force_refresh', value)
+    return value in ('true', '1')
+
+
+def _validate_release_range(start_date: str, end_date: str) -> None:
+    try:
+        start = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end = datetime.strptime(end_date, '%Y-%m-%d').date()
+    except (TypeError, ValueError) as exc:
+        raise InvalidKeyValue(
+            'date_range', f'{start_date}|{end_date}'
+        ) from exc
+    if end < start or (end - start).days > 365:
+        raise InvalidKeyValue('date_range', f'{start_date}|{end_date}')
+
+
 @api.route('/releases/new', methods=['GET'])
 @error_handler
 @auth
@@ -1138,25 +1196,22 @@ def api_releases_new():
         end_date: End of date range (YYYY-MM-DD)
         limit: Max results (default 100)
     """
-    from datetime import datetime, timedelta
-
     start_date = extract_key(request, 'start_date', False)
     end_date = extract_key(request, 'end_date', False)
-    limit = extract_key(request, 'limit', False)
-    
     # Default to last 30 days if not specified
     if not start_date:
         start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
     if not end_date:
         end_date = datetime.now().strftime('%Y-%m-%d')
-    
-    limit = int(limit) if limit else 100
-    
+
+    _validate_release_range(start_date, end_date)
+    limit = _metadata_int_param('limit', 100)
     source = _get_configured_metadata_source()
-    releases = run(source.get_new_releases(
+    releases = run(MetadataCache(source).get_releases(
         start_date=start_date,
         end_date=end_date,
-        limit=limit
+        limit=limit,
+        force_refresh=_force_metadata_refresh()
     ))
     return return_api(releases)
 
@@ -1170,11 +1225,15 @@ def api_releases_upcoming():
     Query params:
         days_ahead: Days to look ahead (default 30)
     """
-    days_ahead = extract_key(request, 'days_ahead', False)
-    days_ahead = int(days_ahead) if days_ahead else 30
-    
+    days_ahead = _metadata_int_param('days_ahead', 30, 365)
+    today = datetime.now().date()
     source = _get_configured_metadata_source()
-    releases = run(source.get_upcoming_releases(days_ahead=days_ahead))
+    releases = run(MetadataCache(source).get_releases(
+        start_date=today.isoformat(),
+        end_date=(today + timedelta(days=days_ahead)).isoformat(),
+        limit=_metadata_int_param('limit', 5000),
+        force_refresh=_force_metadata_refresh()
+    ))
     return return_api(releases)
 
 
@@ -1187,11 +1246,15 @@ def api_releases_recent():
     Query params:
         days_back: Days to look back (default 7)
     """
-    days_back = extract_key(request, 'days_back', False)
-    days_back = int(days_back) if days_back else 7
-    
+    days_back = _metadata_int_param('days_back', 7, 365)
+    today = datetime.now().date()
     source = _get_configured_metadata_source()
-    releases = run(source.get_recent_releases(days_back=days_back))
+    releases = run(MetadataCache(source).get_releases(
+        start_date=(today - timedelta(days=days_back)).isoformat(),
+        end_date=today.isoformat(),
+        limit=_metadata_int_param('limit', 5000),
+        force_refresh=_force_metadata_refresh()
+    ))
     return return_api(releases)
 
 
@@ -1205,16 +1268,24 @@ def api_library_upcoming():
         days_ahead: Days to look ahead (default 90)
         monitored_only: Only show monitored volumes (default true)
     """
-    from datetime import datetime, timedelta
-    
-    days_ahead = extract_key(request, 'days_ahead', False)
+    start_date = extract_key(request, 'start_date', False)
+    end_date = extract_key(request, 'end_date', False)
     monitored_only = extract_key(request, 'monitored_only', False)
-    
-    days_ahead = int(days_ahead) if days_ahead else 90
     monitored_only = monitored_only != 'false' if monitored_only else True
-    
-    today = datetime.now().strftime('%Y-%m-%d')
-    future = (datetime.now() + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
+
+    if start_date or end_date:
+        if not (start_date and end_date):
+            raise InvalidKeyValue(
+                'date_range', f'{start_date}|{end_date}'
+            )
+        _validate_release_range(start_date, end_date)
+        today = start_date
+        future = end_date
+    else:
+        days_ahead = _metadata_int_param('days_ahead', 90, 365)
+        current_date = datetime.now().date()
+        today = current_date.isoformat()
+        future = (current_date + timedelta(days=days_ahead)).isoformat()
     
     cursor = get_db()
     
@@ -1259,11 +1330,12 @@ def api_publishers():
     Query params:
         limit: Max results (default 50)
     """
-    limit = extract_key(request, 'limit', False)
-    limit = int(limit) if limit else 50
-    
+    limit = _metadata_int_param('limit', 50, 1000)
     source = _get_configured_metadata_source()
-    publishers = run(source.get_publishers(limit=limit))
+    publishers = run(MetadataCache(source).get_publishers(
+        limit=limit,
+        force_refresh=_force_metadata_refresh()
+    ))
     return return_api(publishers)
 
 
@@ -1276,13 +1348,12 @@ def api_publisher_volumes(publisher_id: int):
     Query params:
         limit: Max results (default 100)
     """
-    limit = extract_key(request, 'limit', False)
-    limit = int(limit) if limit else 100
-    
+    limit = _metadata_int_param('limit', 100, 1000)
     source = _get_configured_metadata_source()
-    volumes = run(source.search_publisher_volumes(
+    volumes = run(MetadataCache(source).get_publisher_volumes(
         publisher_id=publisher_id,
-        limit=limit
+        limit=limit,
+        force_refresh=_force_metadata_refresh()
     ))
     return return_api(volumes)
 
@@ -1317,8 +1388,10 @@ def api_metadata_source_test():
     Body:
         source: The source type to test (comicvine or metron)
     """
-    from backend.implementations.metadata_sources import (MetadataSourceType,
-                                                          get_metadata_source)
+    from backend.implementations.metadata_sources import (
+        MetadataSourceType,
+        get_metadata_source,
+    )
     
     data = request.get_json()
     source_type = data.get('source', 'comicvine')

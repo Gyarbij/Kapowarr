@@ -21,7 +21,7 @@ Once you have added volumes to your library, you can click on one to view it. He
 
 In the bar at the top, the 'Refresh & Scan' button will update the metadata of the volume (= 'refresh') and scan for files (= 'scan'). Updating the metadata means reaching out to ComicVine and getting a fresh version of the poster, title, release year and description but also (and more importantly) the list of issues and their descriptions, issue numbers and release dates. Scanning for files means looking in the volume folder (the folder linked to the volume) for media files and matching them to the issues. If Kapowarr is able to match them to an issue, that issue will be marked as downloaded. The file has to pass a list of [criteria](./matching.md#files-to-issues) in order to match to an issue.
 
-On the home page (a.k.a. the library page), the button 'Update All' will trigger a Refresh & Scan for all volumes. It automatically runs, but how often it automatically updates a volume is a bit complicated. See the [implementation details](./implementation_details.md#update-all) for more information. But in general you can trust that volumes stay up-to-date with a few hours of margin.
+On the home page (a.k.a. the library page), the button 'Update All' will trigger a Refresh & Scan for all volumes. A manual Update All does not skip volumes. The scheduled Update All may skip volumes that were refreshed recently. See the [implementation details](./implementation_details.md#update-all) for more information.
 
 ### Monitoring
 

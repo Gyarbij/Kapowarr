@@ -933,8 +933,9 @@ function showInfoWindow(window) {
 
 // code run on load
 
-usingApiKey()
-.then(api_key => {
+Promise.all([usingApiKey(), socketReady])
+.then(([api_key, activeSocket]) => {
+	if (!api_key || !activeSocket) return;
 	fetchAPI(`/volumes/${volume_id}`, api_key)
 	.then(json => fillPage(json.result, api_key))
 	.catch(e => {
@@ -964,7 +965,7 @@ usingApiKey()
 	document.querySelector('#submit-manage-issues').onclick =
 	e => submitManagedIssues(api_key);
 
-	socket.on(
+	activeSocket.on(
 		'downloaded_status',
 		data => {
 			if (data.volume_id !== volume_id)

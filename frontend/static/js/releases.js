@@ -5,12 +5,20 @@ const loadingIndicator = document.getElementById('releases-loading');
 const emptyState = document.getElementById('releases-empty');
 const releaseTypeSelect = document.getElementById('release-type');
 const daysSelect = document.getElementById('days-select');
+const customRange = document.getElementById('custom-range');
+const startDateInput = document.getElementById('release-start-date');
+const endDateInput = document.getElementById('release-end-date');
+const releaseSortSelect = document.getElementById('release-sort');
 const hideInLibraryCheckbox = document.getElementById('hide-in-library');
 const refreshButton = document.getElementById('refresh-button');
+const loadMoreButton = document.getElementById('load-more-button');
+const releaseCount = document.getElementById('release-count');
 
 let allReleases = [];
 let hideInLibrary = false;
 let rootFoldersLoaded = false;
+let visibleReleaseCount = 100;
+let releaseRequestId = 0;
 
 const addWindowEls = {
 	form: document.querySelector('#add-form'),
@@ -35,25 +43,47 @@ function formatDate(dateStr) {
 	return date.toLocaleDateString('en-US', options);
 }
 
+function getReleaseDate(release) {
+	return release.store_date || release.cover_date || '';
+}
+
+function sortReleases(releases) {
+	const [field, direction] = releaseSortSelect.value.split('-');
+	const multiplier = direction === 'desc' ? -1 : 1;
+	return [...releases].sort((first, second) => {
+		let firstValue;
+		let secondValue;
+		if (field === 'date') {
+			firstValue = getReleaseDate(first);
+			secondValue = getReleaseDate(second);
+		} else if (field === 'publisher') {
+			firstValue = first.publisher || '';
+			secondValue = second.publisher || '';
+		} else {
+			firstValue = first.volume_title || '';
+			secondValue = second.volume_title || '';
+		}
+		return multiplier * firstValue.localeCompare(
+			secondValue,
+			undefined,
+			{ numeric: true, sensitivity: 'base' }
+		);
+	});
+}
+
 // Group releases by date
 function groupByDate(releases) {
 	const groups = {};
 	releases.forEach(release => {
-		const date = release.store_date || release.cover_date || 'Unknown';
+		const date = getReleaseDate(release) || 'Unknown';
 		if (!groups[date]) {
 			groups[date] = [];
 		}
 		groups[date].push(release);
 	});
-	// Sort dates descending for recent, ascending for upcoming/library
-	const sortedDates = Object.keys(groups).sort((a, b) => {
-		if (a === 'Unknown') return 1;
-		if (b === 'Unknown') return -1;
-		const releaseType = releaseTypeSelect.value;
-		const isUpcoming = releaseType === 'upcoming' || releaseType === 'library';
-		return isUpcoming ? a.localeCompare(b) : b.localeCompare(a);
-	});
-	return sortedDates.map(date => ({ date, releases: groups[date] }));
+	return Object.entries(groups).map(
+		([date, entries]) => ({ date, releases: entries })
+	);
 }
 
 // Create a release card
@@ -62,6 +92,7 @@ function createReleaseCard(release, isLibraryView = false) {
 	card.className = 'release-card';
 	card.dataset.cvId = release.issue_cv_id;
 	card.dataset.volumeCvId = release.volume_cv_id || release.volume_id;
+	card.dataset.metadataSource = release.metadata_source || 'comicvine';
 
 	// Library view items are always in library
 	if (release.in_library || isLibraryView) {
@@ -107,8 +138,10 @@ function createReleaseCard(release, isLibraryView = false) {
 			// Go to volume page
 			window.location.href = `${url_base}/volumes/${volumeId}`;
 		} else if (release.issue_cv_id) {
-			// Open ComicVine page
-			window.open(`https://comicvine.gamespot.com/issue/4000-${release.issue_cv_id}/`, '_blank');
+			const externalUrl = release.metadata_source === 'metron'
+				? `https://metron.cloud/issue/${release.issue_cv_id}/`
+				: `https://comicvine.gamespot.com/issue/4000-${release.issue_cv_id}/`;
+			window.open(externalUrl, '_blank');
 		}
 	});
 
@@ -255,6 +288,7 @@ function addVolume() {
 // Render releases to grid
 function renderReleases(releases) {
 	releasesGrid.innerHTML = '';
+	loadMoreButton.classList.add('hidden');
 
 	const isLibraryView = releaseTypeSelect.value === 'library';
 
@@ -263,6 +297,9 @@ function renderReleases(releases) {
 	if (hideInLibrary && !isLibraryView) {
 		filteredReleases = releases.filter(r => !r.in_library);
 	}
+	filteredReleases = sortReleases(filteredReleases);
+	const visibleReleases = filteredReleases.slice(0, visibleReleaseCount);
+	releaseCount.innerText = `${visibleReleases.length} of ${filteredReleases.length}`;
 
 	if (filteredReleases.length === 0) {
 		loadingIndicator.classList.add('hidden');
@@ -275,61 +312,131 @@ function renderReleases(releases) {
 
 	emptyState.classList.add('hidden');
 
-	// Group by date
-	const groups = groupByDate(filteredReleases);
+	if (releaseSortSelect.value.startsWith('date-')) {
+		groupByDate(visibleReleases).forEach(group => {
+			const header = document.createElement('div');
+			header.className = 'date-group';
+			header.innerHTML = `<h2>${formatDate(group.date)}</h2>`;
+			releasesGrid.appendChild(header);
 
-	groups.forEach(group => {
-		// Date header
-		const header = document.createElement('div');
-		header.className = 'date-group';
-		header.innerHTML = `<h2>${formatDate(group.date)}</h2>`;
-		releasesGrid.appendChild(header);
-
-		// Release cards
-		group.releases.forEach(release => {
+			group.releases.forEach(release => {
+				releasesGrid.appendChild(createReleaseCard(release, isLibraryView));
+			});
+		});
+	} else {
+		visibleReleases.forEach(release => {
 			releasesGrid.appendChild(createReleaseCard(release, isLibraryView));
 		});
-	});
+	}
+
+	if (visibleReleases.length < filteredReleases.length) {
+		loadMoreButton.classList.remove('hidden');
+	}
 
 	loadingIndicator.classList.add('hidden');
 }
 
+function formatInputDate(date) {
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, '0');
+	const day = String(date.getDate()).padStart(2, '0');
+	return `${year}-${month}-${day}`;
+}
+
+function ensureCustomRange() {
+	if (startDateInput.value && endDateInput.value) return;
+	const start = new Date();
+	const end = new Date();
+	const isUpcoming = releaseTypeSelect.value !== 'recent';
+	if (isUpcoming)
+		end.setDate(end.getDate() + 30);
+	else
+		start.setDate(start.getDate() - 30);
+	startDateInput.value = formatInputDate(start);
+	endDateInput.value = formatInputDate(end);
+	setLocalStorage({
+		release_custom_start: startDateInput.value,
+		release_custom_end: endDateInput.value
+	});
+}
+
+function validateCustomRange() {
+	if (!startDateInput.value || !endDateInput.value) return false;
+	const start = new Date(`${startDateInput.value}T00:00:00Z`);
+	const end = new Date(`${endDateInput.value}T00:00:00Z`);
+	const days = (end - start) / 86400000;
+	let message = '';
+	if (days < 0)
+		message = 'End date must be after start date';
+	else if (days > 365)
+		message = 'Date range must be 365 days or less';
+	endDateInput.setCustomValidity(message);
+	if (message) endDateInput.reportValidity();
+	return message === '';
+}
+
 // Fetch releases from API
-function fetchReleases(api_key) {
+function fetchReleases(api_key, forceRefresh=false) {
+	const selectedRange = daysSelect.value;
+	if (selectedRange === 'custom') {
+		ensureCustomRange();
+		if (!validateCustomRange()) return Promise.resolve();
+	}
+	const requestId = ++releaseRequestId;
 	loadingIndicator.classList.remove('hidden');
 	emptyState.classList.add('hidden');
 	releasesGrid.innerHTML = '';
+	loadMoreButton.classList.add('hidden');
+	refreshButton.disabled = true;
 
 	const releaseType = releaseTypeSelect.value;
-	const days = parseInt(daysSelect.value);
 
 	let endpoint;
-	let params = {};
-	if (releaseType === 'upcoming') {
+	let params = { limit: 5000 };
+	if (selectedRange === 'custom') {
+		ensureCustomRange();
+		endpoint = releaseType === 'library'
+			? '/releases/library/upcoming'
+			: '/releases/new';
+		params = {
+			...params,
+			start_date: startDateInput.value,
+			end_date: endDateInput.value
+		};
+	} else if (releaseType === 'upcoming') {
 		endpoint = '/releases/upcoming';
-		params = { days_ahead: days };
+		params.days_ahead = parseInt(selectedRange);
 	} else if (releaseType === 'library') {
 		endpoint = '/releases/library/upcoming';
-		params = { days_ahead: days };
+		params.days_ahead = parseInt(selectedRange);
 	} else {
 		endpoint = '/releases/recent';
-		params = { days_back: days };
+		params.days_back = parseInt(selectedRange);
 	}
+	if (forceRefresh && releaseType !== 'library')
+		params.force_refresh = 'true';
 
 	fetchAPI(endpoint, api_key, params)
 	.then(data => {
+		if (requestId !== releaseRequestId) return;
 		if (data.result) {
 			allReleases = data.result;
+			visibleReleaseCount = 100;
 			renderReleases(allReleases);
 		} else {
 			throw new Error(data.error || 'Failed to fetch releases');
 		}
 	})
 	.catch(error => {
+		if (requestId !== releaseRequestId) return;
 		console.error('Error fetching releases:', error);
 		loadingIndicator.classList.add('hidden');
 		emptyState.classList.remove('hidden');
 		emptyState.querySelector('p').textContent = `Error: ${error.message || 'Failed to fetch releases'}`;
+	})
+	.finally(() => {
+		if (requestId === releaseRequestId)
+			refreshButton.disabled = false;
 	});
 }
 
@@ -340,9 +447,14 @@ function updateDaysLabel() {
 	const isUpcoming = releaseType === 'upcoming' || releaseType === 'library';
 	
 	options.forEach(opt => {
+		if (opt.value === 'custom') {
+			opt.textContent = 'Custom Dates';
+			return;
+		}
 		const days = opt.value;
 		opt.textContent = isUpcoming ? `Next ${days} Days` : `Last ${days} Days`;
 	});
+	customRange.classList.toggle('hidden', daysSelect.value !== 'custom');
 
 	// Hide "Hide In Library" checkbox for library view
 	const hideInLibraryContainer = hideInLibraryCheckbox.closest('.filter-checkbox');
@@ -357,21 +469,70 @@ usingApiKey()
 	if (addWindowEls.form) {
 		addWindowEls.form.action = 'javascript:addVolume();';
 	}
-	ensureRootFolders(api_key);
+	const preferences = getLocalStorage(
+		'release_type',
+		'release_range',
+		'release_sort',
+		'release_custom_start',
+		'release_custom_end',
+		'release_hide_in_library'
+	);
+	releaseTypeSelect.value = preferences.release_type || 'recent';
+	daysSelect.value = preferences.release_range || '30';
+	releaseSortSelect.value = preferences.release_sort || 'date-desc';
+	startDateInput.value = preferences.release_custom_start || '';
+	endDateInput.value = preferences.release_custom_end || '';
+	hideInLibrary = Boolean(preferences.release_hide_in_library);
+	hideInLibraryCheckbox.checked = hideInLibrary;
 
 	releaseTypeSelect.addEventListener('change', () => {
+		const isUpcoming = releaseTypeSelect.value !== 'recent';
+		if (releaseSortSelect.value.startsWith('date-'))
+			releaseSortSelect.value = isUpcoming ? 'date-asc' : 'date-desc';
+		setLocalStorage({
+			release_type: releaseTypeSelect.value,
+			release_sort: releaseSortSelect.value
+		});
 		updateDaysLabel();
 		fetchReleases(api_key);
 	});
 
-	daysSelect.addEventListener('change', () => fetchReleases(api_key));
+	daysSelect.addEventListener('change', () => {
+		setLocalStorage({release_range: daysSelect.value});
+		updateDaysLabel();
+		if (daysSelect.value === 'custom') ensureCustomRange();
+		fetchReleases(api_key);
+	});
 
-	hideInLibraryCheckbox.addEventListener('change', (e) => {
-		hideInLibrary = e.target.checked;
+	[startDateInput, endDateInput].forEach(input => {
+		input.addEventListener('change', () => {
+			if (!validateCustomRange()) return;
+			setLocalStorage({
+				release_custom_start: startDateInput.value,
+				release_custom_end: endDateInput.value
+			});
+			fetchReleases(api_key);
+		});
+	});
+
+	releaseSortSelect.addEventListener('change', () => {
+		setLocalStorage({release_sort: releaseSortSelect.value});
+		visibleReleaseCount = 100;
 		renderReleases(allReleases);
 	});
 
-	refreshButton.addEventListener('click', () => fetchReleases(api_key));
+	hideInLibraryCheckbox.addEventListener('change', (e) => {
+		hideInLibrary = e.target.checked;
+		setLocalStorage({release_hide_in_library: hideInLibrary});
+		visibleReleaseCount = 100;
+		renderReleases(allReleases);
+	});
+
+	refreshButton.addEventListener('click', () => fetchReleases(api_key, true));
+	loadMoreButton.addEventListener('click', () => {
+		visibleReleaseCount += 100;
+		renderReleases(allReleases);
+	});
 
 	// Initial load
 	updateDaysLabel();

@@ -72,6 +72,10 @@ const paginationState = {
 	pageSize: 50
 };
 
+let libraryRequestId = 0;
+let activeLibraryRequestKey = null;
+let activeLibraryRequest = null;
+
 function showLibraryPage(el) {
 	hide(Object.values(library_els.pages), [el]);
 }
@@ -293,11 +297,19 @@ function getVolumeParams() {
 }
 
 function fetchLibrary(api_key) {
+	const params = getVolumeParams();
+	const requestKey = JSON.stringify(params);
+	if (activeLibraryRequest && activeLibraryRequestKey === requestKey)
+		return activeLibraryRequest;
+
+	const requestId = ++libraryRequestId;
+	activeLibraryRequestKey = requestKey;
 	library_els.mass_edit.progress.innerText = '';
 	showLibraryPage(library_els.pages.loading);
 
-	fetchAPI('/volumes', api_key, getVolumeParams())
+	activeLibraryRequest = fetchAPI('/volumes', api_key, params)
 		.then(json => {
+			if (requestId !== libraryRequestId) return;
 			const result = json.result;
 			state.currentVolumes = result.volumes;
 
@@ -319,7 +331,14 @@ function fetchLibrary(api_key) {
 			renderLibrary(result.volumes, api_key);
 			showLibraryPage(library_els.pages.view);
 			updatePaginationControls();
+		})
+		.finally(() => {
+			if (requestId === libraryRequestId) {
+				activeLibraryRequest = null;
+				activeLibraryRequestKey = null;
+			}
 		});
+	return activeLibraryRequest;
 }
 
 function goToPage(page, api_key) {
@@ -507,12 +526,17 @@ if (lib_options.lib_page_size !== null && lib_options.lib_page_size !== undefine
 }
 library_els.pagination.size.value = String(paginationState.pageSize);
 
-usingApiKey()
-	.then(api_key => Promise.all([
-		fetchDisplayMode(api_key),
-		fetchPublishers(api_key)
-	]).then(() => api_key))
-	.then(api_key => {
+Promise.all([usingApiKey(), socketReady])
+	.then(([api_key, activeSocket]) => {
+		if (!api_key || !activeSocket) return null;
+		return Promise.all([
+			fetchDisplayMode(api_key),
+			fetchPublishers(api_key)
+		]).then(() => [api_key, activeSocket]);
+	})
+	.then(ready => {
+		if (!ready) return;
+		const [api_key, activeSocket] = ready;
 		fetchLibrary(api_key);
 		fetchStats(api_key);
 
@@ -605,7 +629,7 @@ usingApiKey()
 				'monitoring_scheme': document.querySelector('select[name="monitoring_scheme"]').value
 			});
 
-		socket.on(
+		activeSocket.on(
 			'downloaded_status',
 			data => {
 				const inst = new LibraryEntry(data.volume_id, api_key);
@@ -617,7 +641,7 @@ usingApiKey()
 				inst.setProgressBar(new_progress[0], new_progress[1]);
 			}
 		);
-		socket.on(
+		activeSocket.on(
 			'mass_editor_status',
 			data => library_els.mass_edit.progress.innerText = `${data.current_item}/${data.total_items}`
 		);

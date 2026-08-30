@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from backend.internals import db_migration
+from backend.internals.db import DB_SCHEMA
 
 
 class DatabaseMigrationReconciliationTest(unittest.TestCase):
@@ -98,6 +99,53 @@ class DatabaseMigrationReconciliationTest(unittest.TestCase):
         self.assertIn('forced', self._columns('volume_files'))
         self.assertIn('created_at', self._columns('volumes'))
         self.assertIn('store_date', self._columns('issues'))
+
+    def test_source_aware_cache_allows_ids_from_multiple_sources(self):
+        self._create_common_tables()
+        with patch.object(
+            db_migration,
+            'get_db',
+            return_value=self.connection
+        ):
+            db_migration._migrate_add_release_cache_and_publisher_tables()
+            db_migration._migrate_source_aware_metadata_cache()
+
+        release = (
+            1, 2, 'Example', '1', 1.0,
+            '2026-08-01', '2026-08-01', None, None, 1
+        )
+        for source in ('comicvine', 'metron'):
+            self.connection.execute("""
+                INSERT INTO release_cache(
+                    metadata_source, issue_cv_id, volume_cv_id,
+                    volume_title, issue_number, calculated_issue_number,
+                    store_date, cover_date, cover_url, publisher, fetched_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (source, *release))
+
+        count = self.connection.execute(
+            'SELECT COUNT(*) FROM release_cache;'
+        ).fetchone()[0]
+        self.assertEqual(count, 2)
+
+    def test_fresh_schema_contains_current_metadata_cache(self):
+        self.connection.executescript(DB_SCHEMA)
+
+        self.assertIn('store_date', self._columns('issues'))
+        issue_columns = [
+            row[1]
+            for row in self.connection.execute('PRAGMA table_info(issues);')
+        ]
+        self.assertEqual(issue_columns[-1], 'store_date')
+        self.assertIn('metadata_source', self._columns('release_cache'))
+        self.assertIn('metadata_source', self._columns('publisher_cache'))
+        self.assertTrue(self._columns('release_cache_windows'))
+        self.assertTrue(self._columns('metadata_response_cache'))
+        indexes = {
+            row[1]
+            for row in self.connection.execute('PRAGMA index_list(volumes);')
+        }
+        self.assertIn('volumes_created_at_index', indexes)
 
 
 if __name__ == '__main__':

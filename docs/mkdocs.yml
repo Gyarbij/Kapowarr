@@ -95,6 +95,7 @@ nav:
   - General Information:
     - Introduction: general_info/general_info.md
     - How To Use: general_info/how_to_use.md
+    - Releases And Publishers: general_info/releases.md
     - Matching: general_info/matching.md
     - Library Import: general_info/library_import.md
     - Implementation Details: general_info/implementation_details.md

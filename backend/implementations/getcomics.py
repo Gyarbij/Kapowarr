@@ -14,32 +14,46 @@ from aiohttp import ClientError
 from bencoding import bencode
 from bs4 import BeautifulSoup, Tag
 
-from backend.base.custom_exceptions import (DownloadLimitReached,
-                                            EnqueuingDownloadFailure,
-                                            IssueNotFound, LinkBroken)
-from backend.base.definitions import (GC_DOWNLOAD_SOURCE_TERMS,
-                                      BlocklistReason, Constants, Download,
-                                      DownloadGroup,
-                                      EnqueuingDownloadFailureReason,
-                                      GCDownloadSource, SearchResultData,
-                                      SpecialVersion)
-from backend.base.file_extraction import (extract_filename_data,
-                                          refine_special_version)
-from backend.base.helpers import (AsyncSession, check_overlapping_issues,
-                                  first_of_range, fix_year, force_range,
-                                  get_torrent_info, normalise_year)
+from backend.base.custom_exceptions import (
+    DownloadLimitReached,
+    EnqueuingDownloadFailure,
+    IssueNotFound,
+    LinkBroken,
+)
+from backend.base.definitions import (
+    GC_DOWNLOAD_SOURCE_TERMS,
+    BlocklistReason,
+    Constants,
+    Download,
+    DownloadGroup,
+    EnqueuingDownloadFailureReason,
+    GCDownloadSource,
+    SearchResultData,
+    SpecialVersion,
+)
+from backend.base.file_extraction import extract_filename_data, refine_special_version
+from backend.base.helpers import (
+    AsyncSession,
+    check_overlapping_issues,
+    first_of_range,
+    fix_year,
+    force_range,
+    get_torrent_info,
+    normalise_year,
+)
 from backend.base.logging import LOGGER
-from backend.implementations.blocklist import (add_to_blocklist,
-                                               blocklist_contains)
-from backend.implementations.download_clients import (DirectDownload,
-                                                      MediaFireDownload,
-                                                      MediaFireFolderDownload,
-                                                      MegaDownload,
-                                                      MegaFolderDownload,
-                                                      PixelDrainDownload,
-                                                      PixelDrainFolderDownload,
-                                                      TorrentDownload,
-                                                      WeTransferDownload)
+from backend.implementations.blocklist import add_to_blocklist, blocklist_contains
+from backend.implementations.download_clients import (
+    DirectDownload,
+    MediaFireDownload,
+    MediaFireFolderDownload,
+    MegaDownload,
+    MegaFolderDownload,
+    PixelDrainDownload,
+    PixelDrainFolderDownload,
+    TorrentDownload,
+    WeTransferDownload,
+)
 from backend.implementations.external_clients import ExternalClients
 from backend.implementations.matching import download_group_filter
 from backend.implementations.volumes import Volume
@@ -69,11 +83,13 @@ def _get_max_page(
     if not page_links:
         return 1
 
-    return int(
-        page_links[-1]
-        .get_text(strip=True)
-        .replace(',', '')
-        .replace('.', '')
+    page_numbers = (
+        link.get_text(strip=True).replace(',', '').replace('.', '')
+        for link in page_links
+    )
+    return max(
+        (int(page) for page in page_numbers if page.isdecimal()),
+        default=1
     )
 
 

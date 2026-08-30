@@ -10,6 +10,13 @@ const QEls = {
 // Filling data
 //
 function addQueueEntry(api_key, obj) {
+	const existing = document.querySelector(
+		`#queue > tr[data-id="${obj.id}"]`
+	);
+	if (existing !== null) {
+		updateQueueEntry(obj);
+		return;
+	}
 	const entry = QEls.queue_entry.cloneNode(true);
 	entry.dataset.id = obj.id;
 	QEls.queue.appendChild(entry);
@@ -47,6 +54,7 @@ function addQueueEntry(api_key, obj) {
 
 function updateQueueEntry(obj) {
 	const tr = document.querySelector(`#queue > tr[data-id="${obj.id}"]`);
+	if (tr === null) return;
 	tr.dataset.status = obj.status;
 	tr.querySelector('td:nth-child(1)').innerText =
 		obj.status.charAt(0).toUpperCase() + obj.status.slice(1);
@@ -61,11 +69,12 @@ function updateQueueEntry(obj) {
 };
 
 function removeQueueEntry(id) {
-	document.querySelector(`#queue > tr[data-id="${id}"]`).remove();
+	const entry = document.querySelector(`#queue > tr[data-id="${id}"]`);
+	if (entry !== null) entry.remove();
 };
 
 function fillQueue(api_key) {
-	fetchAPI('/activity/queue', api_key)
+	return fetchAPI('/activity/queue', api_key)
 	.then(json => {
 		QEls.queue.innerHTML = '';
 		json.result.forEach(obj => addQueueEntry(api_key, obj));
@@ -99,11 +108,29 @@ function deleteEntry(id, api_key, blocklist=false) {
 
 // code run on load
 
-usingApiKey()
-.then(api_key => {
-	fillQueue(api_key);
-	socket.on('queue_added', data => addQueueEntry(api_key, data));
-	socket.on('queue_status', updateQueueEntry);
-	socket.on('queue_ended', data => removeQueueEntry(data.id));
+Promise.all([usingApiKey(), socketReady])
+.then(([api_key, activeSocket]) => {
+	if (!api_key || !activeSocket) return;
+	let queueLoaded = false;
+	const pendingEvents = [];
+	const handleEvent = callback => data => {
+		if (queueLoaded)
+			callback(data);
+		else
+			pendingEvents.push(() => callback(data));
+	};
+	activeSocket.on(
+		'queue_added',
+		handleEvent(data => addQueueEntry(api_key, data))
+	);
+	activeSocket.on('queue_status', handleEvent(updateQueueEntry));
+	activeSocket.on(
+		'queue_ended',
+		handleEvent(data => removeQueueEntry(data.id))
+	);
+	fillQueue(api_key).then(() => {
+		queueLoaded = true;
+		pendingEvents.forEach(callback => callback());
+	});
     QEls.tool_bar.remove_all.onclick = e => deleteAll(api_key);
 });

@@ -99,6 +99,22 @@
 			<option value="14">Last 14 Days</option>
 			<option value="30">Last 30 Days</option>
 			<option value="90">Last 90 Days</option>
+			<option value="180">Last 180 Days</option>
+			<option value="365">Last 365 Days</option>
+			<option value="custom">Custom Dates</option>
+		</select>
+		<div id="custom-range" class="hidden">
+			<input id="release-start-date" type="date" aria-label="Start date">
+			<span aria-hidden="true">to</span>
+			<input id="release-end-date" type="date" aria-label="End date">
+		</div>
+		<select id="release-sort" aria-label="Sort releases">
+			<option value="date-desc">Newest First</option>
+			<option value="date-asc">Oldest First</option>
+			<option value="title-asc">Title A-Z</option>
+			<option value="title-desc">Title Z-A</option>
+			<option value="publisher-asc">Publisher A-Z</option>
+			<option value="publisher-desc">Publisher Z-A</option>
 		</select>
 	</div>
 {% endblock %}
@@ -110,6 +126,7 @@
 			{{ icon_button("refresh-button", "Refresh releases", "refresh.svg", "Refresh") }}
 		</div>
 		<div class="tool-bar">
+			<span id="release-count" aria-live="polite"></span>
 			<label class="filter-checkbox">
 				<input type="checkbox" id="hide-in-library">
 				<span>Hide In Library</span>
@@ -124,6 +141,9 @@
 			<p>No releases found for this period.</p>
 		</div>
 		<div id="releases-grid" class="releases-container"></div>
+		<div class="load-more-container">
+			<button id="load-more-button" type="button" class="hidden">Load More</button>
+		</div>
 	</div>
 </main>
 {% endblock main %}

@@ -10,6 +10,9 @@ const searchInput = document.getElementById('search-input');
 const searchForm = document.getElementById('search-container');
 const clearSearchBtn = document.getElementById('clear-search');
 const currentViewLabel = document.getElementById('current-view-label');
+const publisherSortSelect = document.getElementById('publisher-sort');
+const publisherCount = document.getElementById('publisher-count');
+const loadMoreButton = document.getElementById('load-more-button');
 
 let rootFoldersLoaded = false;
 
@@ -42,8 +45,13 @@ const MAJOR_PUBLISHERS = {
 };
 
 let allPublishers = [];
+let currentVolumes = [];
 let currentPublisher = null;
 let searchQuery = '';
+let visiblePublisherCount = 100;
+let visibleVolumeCount = 100;
+let publisherRequestId = 0;
+let volumeRequestId = 0;
 
 // Create a publisher card
 function createPublisherCard(publisher) {
@@ -56,9 +64,12 @@ function createPublisherCard(publisher) {
 		card.classList.add('major');
 	}
 
+	const volumeCount = publisher.volume_count
+		? `${publisher.volume_count} volume${publisher.volume_count === 1 ? '' : 's'}`
+		: 'Browse volumes';
 	card.innerHTML = `
 		<h3 class="publisher-name" title="${publisher.name}">${publisher.name}</h3>
-		<p class="publisher-volumes">${publisher.volume_count || 'Browse'} volumes</p>
+		<p class="publisher-volumes">${volumeCount}</p>
 	`;
 
 	card.addEventListener('click', () => {
@@ -242,6 +253,7 @@ function addVolume() {
 // Render publishers
 function renderPublishers(publishers) {
 	publishersGrid.innerHTML = '';
+	loadMoreButton.classList.add('hidden');
 
 	if (publishers.length === 0) {
 		loadingIndicator.classList.add('hidden');
@@ -252,17 +264,27 @@ function renderPublishers(publishers) {
 
 	emptyState.classList.add('hidden');
 
-	// Sort: major publishers first, then alphabetically
 	const sorted = [...publishers].sort((a, b) => {
+		if (publisherSortSelect.value === 'name-asc')
+			return a.name.localeCompare(b.name);
+		if (publisherSortSelect.value === 'name-desc')
+			return b.name.localeCompare(a.name);
+		if (publisherSortSelect.value === 'volumes-desc')
+			return (b.volume_count || 0) - (a.volume_count || 0)
+				|| a.name.localeCompare(b.name);
 		const aMajor = MAJOR_PUBLISHERS[a.comicvine_id] ? 0 : 1;
 		const bMajor = MAJOR_PUBLISHERS[b.comicvine_id] ? 0 : 1;
 		if (aMajor !== bMajor) return aMajor - bMajor;
 		return a.name.localeCompare(b.name);
 	});
 
-	sorted.forEach(publisher => {
+	const visible = sorted.slice(0, visiblePublisherCount);
+	publisherCount.innerText = `${visible.length} of ${sorted.length}`;
+	visible.forEach(publisher => {
 		publishersGrid.appendChild(createPublisherCard(publisher));
 	});
+	if (visible.length < sorted.length)
+		loadMoreButton.classList.remove('hidden');
 
 	loadingIndicator.classList.add('hidden');
 }
@@ -270,6 +292,7 @@ function renderPublishers(publishers) {
 // Render volumes for a publisher
 function renderVolumes(volumes) {
 	volumesGrid.innerHTML = '';
+	loadMoreButton.classList.add('hidden');
 
 	if (volumes.length === 0) {
 		loadingIndicator.classList.add('hidden');
@@ -280,48 +303,64 @@ function renderVolumes(volumes) {
 
 	emptyState.classList.add('hidden');
 
-	volumes.forEach(volume => {
+	const visible = volumes.slice(0, visibleVolumeCount);
+	publisherCount.innerText = `${visible.length} of ${volumes.length}`;
+	visible.forEach(volume => {
 		volumesGrid.appendChild(createVolumeCard(volume));
 	});
+	if (visible.length < volumes.length)
+		loadMoreButton.classList.remove('hidden');
 
 	loadingIndicator.classList.add('hidden');
 }
 
 // Fetch publishers
-function fetchPublishers(api_key) {
+function filteredPublishers() {
+	if (!searchQuery) return allPublishers;
+	return allPublishers.filter(publisher =>
+		publisher.name.toLowerCase().includes(searchQuery.toLowerCase())
+	);
+}
+
+function fetchPublishers(api_key, forceRefresh=false) {
+	const requestId = ++publisherRequestId;
 	loadingIndicator.classList.remove('hidden');
 	emptyState.classList.add('hidden');
 	publishersGrid.innerHTML = '';
 
-	fetchAPI('/publishers', api_key, { limit: 100 })
+	refreshButton.disabled = true;
+	const params = { limit: 1000 };
+	if (forceRefresh) params.force_refresh = 'true';
+
+	fetchAPI('/publishers', api_key, params)
 	.then(data => {
+		if (requestId !== publisherRequestId) return;
 		if (data.result) {
 			allPublishers = data.result;
-			
-			// Apply search filter
-			let filtered = allPublishers;
-			if (searchQuery) {
-				filtered = allPublishers.filter(p => 
-					p.name.toLowerCase().includes(searchQuery.toLowerCase())
-				);
-			}
-			
-			renderPublishers(filtered);
+			visiblePublisherCount = 100;
+			renderPublishers(filteredPublishers());
 		} else {
 			throw new Error(data.error || 'Failed to fetch publishers');
 		}
 	})
 	.catch(error => {
+		if (requestId !== publisherRequestId) return;
 		console.error('Error fetching publishers:', error);
 		loadingIndicator.classList.add('hidden');
 		emptyState.classList.remove('hidden');
 		emptyState.querySelector('p').textContent = `Error: ${error.message || 'Failed to fetch publishers'}`;
+	})
+	.finally(() => {
+		if (requestId === publisherRequestId)
+			refreshButton.disabled = false;
 	});
 }
 
 // Show volumes for a specific publisher
-function showPublisherVolumes(publisher) {
+function showPublisherVolumes(publisher, forceRefresh=false) {
+	const requestId = ++volumeRequestId;
 	currentPublisher = publisher;
+	visibleVolumeCount = 100;
 	
 	// Switch views
 	publishersGrid.classList.add('hidden');
@@ -332,23 +371,37 @@ function showPublisherVolumes(publisher) {
 	loadingIndicator.classList.remove('hidden');
 	emptyState.classList.add('hidden');
 	volumesGrid.innerHTML = '';
+	refreshButton.disabled = true;
 
 	usingApiKey()
-	.then(api_key =>
-		fetchAPI(`/publishers/${publisher.comicvine_id}/volumes`, api_key, { limit: 100 })
-	)
+	.then(api_key => {
+		const params = { limit: 1000 };
+		if (forceRefresh) params.force_refresh = 'true';
+		return fetchAPI(
+			`/publishers/${publisher.comicvine_id}/volumes`,
+			api_key,
+			params
+		);
+	})
 	.then(data => {
+		if (requestId !== volumeRequestId) return;
 		if (data.result) {
-			renderVolumes(data.result);
+			currentVolumes = data.result;
+			renderVolumes(currentVolumes);
 		} else {
 			throw new Error(data.error || 'Failed to fetch volumes');
 		}
 	})
 	.catch(error => {
+		if (requestId !== volumeRequestId) return;
 		console.error('Error fetching publisher volumes:', error);
 		loadingIndicator.classList.add('hidden');
 		emptyState.classList.remove('hidden');
 		emptyState.querySelector('p').textContent = `Error: ${error.message || 'Failed to fetch volumes'}`;
+	})
+	.finally(() => {
+		if (requestId === volumeRequestId)
+			refreshButton.disabled = false;
 	});
 }
 
@@ -360,34 +413,22 @@ function showPublishersView() {
 	publishersGrid.classList.remove('hidden');
 	backButton.classList.add('hidden');
 	currentViewLabel.textContent = '';
-	
-	// Re-render with current search
-	let filtered = allPublishers;
-	if (searchQuery) {
-		filtered = allPublishers.filter(p => 
-			p.name.toLowerCase().includes(searchQuery.toLowerCase())
-		);
-	}
-	renderPublishers(filtered);
+	visiblePublisherCount = 100;
+	renderPublishers(filteredPublishers());
 }
 
 // Search handler
 function handleSearch(e) {
 	e.preventDefault();
 	searchQuery = searchInput.value.trim();
+	setLocalStorage({publisher_search: searchQuery});
+	visiblePublisherCount = 100;
 	
 	if (currentPublisher) {
 		// If in volumes view, go back to filtered publishers
 		showPublishersView();
 	} else {
-		// Filter publishers
-		let filtered = allPublishers;
-		if (searchQuery) {
-			filtered = allPublishers.filter(p => 
-				p.name.toLowerCase().includes(searchQuery.toLowerCase())
-			);
-		}
-		renderPublishers(filtered);
+		renderPublishers(filteredPublishers());
 	}
 }
 
@@ -395,6 +436,8 @@ function handleSearch(e) {
 function clearSearch() {
 	searchInput.value = '';
 	searchQuery = '';
+	setLocalStorage({publisher_search: ''});
+	visiblePublisherCount = 100;
 	
 	if (currentPublisher) {
 		showPublishersView();
@@ -413,19 +456,36 @@ usingApiKey()
 	if (addWindowEls.form) {
 		addWindowEls.form.action = 'javascript:addVolume();';
 	}
-	ensureRootFolders(api_key);
+	const preferences = getLocalStorage('publisher_sort', 'publisher_search');
+	publisherSortSelect.value = preferences.publisher_sort || 'major';
+	searchQuery = preferences.publisher_search || '';
+	searchInput.value = searchQuery;
 
 	refreshButton.addEventListener('click', () => {
 		if (currentPublisher) {
-			showPublisherVolumes(currentPublisher);
+			showPublisherVolumes(currentPublisher, true);
 		} else {
-			fetchPublishers(api_key);
+			fetchPublishers(api_key, true);
 		}
 	});
 
 	backButton.addEventListener('click', showPublishersView);
 	searchForm.addEventListener('submit', handleSearch);
 	clearSearchBtn.addEventListener('click', clearSearch);
+	publisherSortSelect.addEventListener('change', () => {
+		setLocalStorage({publisher_sort: publisherSortSelect.value});
+		visiblePublisherCount = 100;
+		if (!currentPublisher) renderPublishers(filteredPublishers());
+	});
+	loadMoreButton.addEventListener('click', () => {
+		if (currentPublisher) {
+			visibleVolumeCount += 100;
+			renderVolumes(currentVolumes);
+		} else {
+			visiblePublisherCount += 100;
+			renderPublishers(filteredPublishers());
+		}
+	});
 
 	// Initial load
 	fetchPublishers(api_key);

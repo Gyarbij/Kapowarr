@@ -198,7 +198,7 @@ function fillTaskQueue(api_key) {
 		return response.json();
 	})
 	.then(json => {
-		setTaskMessage(json.result[0].message);
+		setTaskMessage(json.result.length ? json.result[0].message : '');
 		json.result.forEach(task => {
 			const task_string = buildTaskString(task);
 			if (task_string in task_to_button)
@@ -289,6 +289,14 @@ const default_values = {
 	'lib_sorting': 'title',
 	'lib_view': 'posters',
 	'lib_filter': '',
+	'release_type': 'recent',
+	'release_range': '30',
+	'release_sort': 'date-desc',
+	'release_custom_start': '',
+	'release_custom_end': '',
+	'release_hide_in_library': false,
+	'publisher_sort': 'major',
+	'publisher_search': '',
 	'theme': 'system',
 	'translated_filter': 'all',
 	'api_key': null,
@@ -330,7 +338,10 @@ function getLocalStorage(...keys) {
 };
 
 function setLocalStorage(keys_values) {
-	const storage = JSON.parse(localStorage.getItem('kapowarr'));
+	const storage = {
+		...default_values,
+		...(JSON.parse(localStorage.getItem('kapowarr')) || {})
+	};
 
 	for (const [key, value] of Object.entries(keys_values))
 		storage[key] = value;
@@ -345,9 +356,13 @@ const url_base = document.querySelector('#url_base').dataset.value;
 const volume_id = parseInt(window.location.pathname.split('/').at(-1)) || null;
 mapButtons(volume_id);
 
+setupLocalStorage();
+applyTheme(getLocalStorage('theme')['theme']);
+
 let socket;
-usingApiKey()
+const socketReady = usingApiKey()
 .then(api_key => {
+	if (api_key === null) return null;
 	setTimeout(() => fillTaskQueue(api_key), 200);
 	// Sync theme from server to ensure consistency across devices
 	fetch(`${url_base}/api/settings?api_key=${api_key}`, { priority: 'low' })
@@ -361,10 +376,8 @@ usingApiKey()
 		})
 		.catch(() => {});
 	socket = connectToWebSocket(api_key);
+	return socket;
 });
-
-setupLocalStorage();
-applyTheme(getLocalStorage('theme')['theme']);
 
 document.querySelector('#toggle-nav').onclick = e =>
 	document.querySelector('#nav-bar').classList.toggle('show-nav');

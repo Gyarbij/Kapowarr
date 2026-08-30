@@ -110,6 +110,13 @@
 			</button>
 		</div>
 		<div class="tool-bar">
+			<select id="publisher-sort" aria-label="Sort publishers">
+				<option value="major">Major, then A-Z</option>
+				<option value="name-asc">Name A-Z</option>
+				<option value="name-desc">Name Z-A</option>
+				<option value="volumes-desc">Most Volumes</option>
+			</select>
+			<span id="publisher-count" aria-live="polite"></span>
 			<span id="current-view-label"></span>
 		</div>
 	</section>
@@ -126,6 +133,9 @@
 		
 		<!-- Publisher volumes view -->
 		<div id="volumes-grid" class="volumes-container hidden"></div>
+		<div class="load-more-container">
+			<button id="load-more-button" type="button" class="hidden">Load More</button>
+		</div>
 	</div>
 </main>
 {% endblock main %}

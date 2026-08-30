@@ -7,15 +7,21 @@ Metron (https://metron.cloud/) is a free, community-driven comic database.
 
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from backend.base.custom_exceptions import VolumeNotMatched
-from backend.base.definitions import (IssueMetadata, NewReleaseMetadata,
-                                      PublisherMetadata, VolumeMetadata)
+from backend.base.custom_exceptions import CredentialInvalid, VolumeNotMatched
+from backend.base.definitions import (
+    IssueMetadata,
+    NewReleaseMetadata,
+    PublisherMetadata,
+    VolumeMetadata,
+)
 from backend.base.file_extraction import extract_issue_number
 from backend.base.helpers import AsyncSession, force_range, normalise_string
 from backend.base.logging import LOGGER
-from backend.implementations.metadata_sources.base import (MetadataSource,
-                                                           MetadataSourceType,
-                                                           register_source)
+from backend.implementations.metadata_sources.base import (
+    MetadataSource,
+    MetadataSourceType,
+    register_source,
+)
 from backend.internals.settings import Settings
 
 METRON_API_URL = "https://metron.cloud/api"
@@ -100,6 +106,9 @@ class MetronSource(MetadataSource):
         Returns:
             JSON response as a dictionary.
         """
+        if not self._auth:
+            raise CredentialInvalid
+
         url = f"{METRON_API_URL}{endpoint}"
         
         async with session.get(
@@ -108,10 +117,9 @@ class MetronSource(MetadataSource):
             params=params or {}
         ) as response:
             if response.status == 401:
-                raise PermissionError("Invalid Metron credentials")
+                raise CredentialInvalid
             if response.status == 429:
                 LOGGER.warning("Metron rate limit reached")
-                return {'results': []}
             response.raise_for_status()
             return await response.json()
     
@@ -269,6 +277,31 @@ class MetronSource(MetadataSource):
         LOGGER.debug(f"Metron: Found {len(all_issues)} issues")
         return all_issues
     
+    async def _get_paginated_results(
+        self,
+        session: AsyncSession,
+        endpoint: str,
+        params: Dict[str, Any],
+        limit: int
+    ) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        page = 1
+        while len(results) < limit:
+            page_size = min(100, limit - len(results))
+            data = await self._call_api(
+                session,
+                endpoint,
+                {**params, 'page': page, 'page_size': page_size}
+            )
+            page_results = data.get('results', [])
+            if not page_results:
+                break
+            results.extend(page_results)
+            if not data.get('next') or len(page_results) < page_size:
+                break
+            page += 1
+        return results
+
     async def get_new_releases(
         self,
         start_date: str,
@@ -282,17 +315,17 @@ class MetronSource(MetadataSource):
         
         async with AsyncSession() as session:
             try:
-                data = await self._call_api(
+                data = await self._get_paginated_results(
                     session,
                     '/issue/',
                     {
                         'store_date_range_after': start_date,
-                        'store_date_range_before': end_date,
-                        'page_size': min(limit, 100)
-                    }
+                        'store_date_range_before': end_date
+                    },
+                    limit
                 )
                 
-                for issue in data.get('results', []):
+                for issue in data:
                     series = issue.get('series', {})
                     release: NewReleaseMetadata = {
                         'issue_cv_id': issue['id'],
@@ -311,8 +344,9 @@ class MetronSource(MetadataSource):
                     }
                     releases.append(release)
                     
-            except Exception as e:
-                LOGGER.warning(f"Metron releases fetch failed: {e}")
+            except Exception:
+                LOGGER.warning("Metron releases fetch failed")
+                raise
         
         LOGGER.debug(f"Metron: Found {len(releases)} releases")
         return releases
@@ -328,13 +362,14 @@ class MetronSource(MetadataSource):
         
         async with AsyncSession() as session:
             try:
-                data = await self._call_api(
+                data = await self._get_paginated_results(
                     session,
                     '/publisher/',
-                    {'page_size': min(limit, 100)}
+                    {},
+                    limit
                 )
                 
-                for pub in data.get('results', []):
+                for pub in data:
                     publisher: PublisherMetadata = {
                         'comicvine_id': pub['id'],
                         'name': pub['name'],
@@ -343,8 +378,9 @@ class MetronSource(MetadataSource):
                     }
                     publishers.append(publisher)
                     
-            except Exception as e:
-                LOGGER.warning(f"Metron publishers fetch failed: {e}")
+            except Exception:
+                LOGGER.warning("Metron publishers fetch failed")
+                raise
         
         LOGGER.debug(f"Metron: Found {len(publishers)} publishers")
         return publishers
@@ -361,17 +397,19 @@ class MetronSource(MetadataSource):
         
         async with AsyncSession() as session:
             try:
-                data = await self._call_api(
+                data = await self._get_paginated_results(
                     session,
                     '/series/',
-                    {'publisher_id': publisher_id, 'page_size': min(limit, 100)}
+                    {'publisher_id': publisher_id},
+                    limit
                 )
                 
-                for series in data.get('results', []):
+                for series in data:
                     results.append(self._format_volume(series))
                     
-            except Exception as e:
-                LOGGER.warning(f"Metron publisher volumes fetch failed: {e}")
+            except Exception:
+                LOGGER.warning("Metron publisher volumes fetch failed")
+                raise
         
         LOGGER.debug(f"Metron: Found {len(results)} series")
         return results
