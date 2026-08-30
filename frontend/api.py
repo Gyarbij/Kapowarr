@@ -11,10 +11,10 @@ from backend.base.custom_exceptions import (InvalidKeyValue,
                                             KeyNotFound, TaskNotFound)
 from backend.base.definitions import (BlocklistReason, BlocklistReasonID,
                                       CredentialData, CredentialSource,
-                                      DownloadSource, KapowarrException,
-                                      LibraryFilter, LibrarySorting,
-                                      MonitorScheme, SpecialVersion,
-                                      StartType, VolumeData)
+                                      DownloadSource, FileMatch,
+                                      KapowarrException, LibraryFilter,
+                                      LibrarySorting, MonitorScheme,
+                                      SpecialVersion, StartType, VolumeData)
 from backend.base.helpers import hash_credential
 from backend.base.logging import LOGGER, get_log_file_contents
 from backend.features.download_queue import (DownloadHandler,
@@ -37,6 +37,8 @@ from backend.implementations.conversion import preview_mass_convert
 from backend.implementations.converters import ConvertersManager
 from backend.implementations.credentials import Credentials
 from backend.implementations.external_clients import ExternalClients
+from backend.implementations.file_matching import (get_file_matching,
+                                                   set_file_matching)
 from backend.implementations.naming import (generate_volume_folder_name,
                                             preview_mass_rename)
 from backend.implementations.remote_mapping import RemoteMappings
@@ -453,6 +455,14 @@ def api_settings():
             and data[s] != getattr(settings.sv, s)
             for s in ('host', 'port', 'url_base')
         )
+        proxy_changes = any(
+            s in data
+            and data[s] != getattr(settings.sv, s)
+            for s in (
+                'proxy_type', 'proxy_host', 'proxy_port',
+                'proxy_username', 'proxy_password', 'proxy_ignored_addresses'
+            )
+        )
 
         if hosting_changes:
             settings.backup_hosting_settings()
@@ -461,6 +471,8 @@ def api_settings():
 
         if hosting_changes:
             Server().restart(StartType.RESTART_HOSTING_CHANGES)
+        elif proxy_changes:
+            Server().restart()
 
         return return_api(settings.get_public_settings().todict())
 
@@ -478,9 +490,18 @@ def api_settings():
             raise InvalidKeyValue('reset_keys', reset_keys)
 
         hosting_changes = any(
-            s in reset_keys
-            and settings.get_default_value(s) != getattr(settings.sv, s)
-            for s in ('host', 'port', 'url_prefix')
+            s in data
+            and data[s] is not None
+            and data[s] != getattr(settings.sv, s)
+            for s in ('host', 'port', 'url_base')
+        )
+        proxy_changes = any(
+            s in data
+            and data[s] != getattr(settings.sv, s)
+            for s in (
+                'proxy_type', 'proxy_host', 'proxy_port',
+                'proxy_username', 'proxy_password', 'proxy_ignored_addresses'
+            )
         )
 
         if hosting_changes:
@@ -491,6 +512,8 @@ def api_settings():
 
         if hosting_changes:
             Server().restart(StartType.RESTART_HOSTING_CHANGES)
+        elif proxy_changes:
+            Server().restart()
 
         return return_api(settings.get_public_settings().todict())
 
@@ -1027,11 +1050,51 @@ def api_issues(id: int):
         result = issue.get_data()
         return return_api(result)
 
+
+# =====================
+# Manual File Match
+# =====================
+@api.route('/volumes/<int:id>/manualmatch', methods=['GET', 'PUT'])
+@error_handler
+@auth
+def api_manual_match(id: int):
+    Library.get_volume(id)
+
+    if request.method == 'GET':
+        result = get_file_matching(id)
+        return return_api(result)
+
+    elif request.method == 'PUT':
+        file_matching_changes = request.get_json()
+        if not isinstance(file_matching_changes, list):
+            raise InvalidKeyValue('body', file_matching_changes)
+
+        entry_types = FileMatch.__annotations__
+        for entry in file_matching_changes:
+            if not isinstance(entry, dict):
+                raise InvalidKeyValue('body', file_matching_changes)
+            if not all(
+                key in entry_types
+                and (
+                    (
+                        isinstance(value, list)
+                        and all(isinstance(i_id, int) for i_id in value)
+                    )
+                    if entry_types[key] == List[int] else
+                    isinstance(value, entry_types[key])
+                )
+                for key, value in entry.items()
+            ):
+                raise InvalidKeyValue('body', file_matching_changes)
+
+        set_file_matching(id, file_matching_changes)
+
+        return return_api({})
+
+
 # =====================
 # Renaming
 # =====================
-
-
 @api.route('/volumes/<int:id>/rename', methods=['GET'])
 @error_handler
 @auth
@@ -1551,7 +1614,7 @@ def api_credentials():
 
     if request.method == 'GET':
         result = [
-            c.todict()
+            c.todict(hide_password=True)
             for c in cred.get_all()
         ]
         return return_api(result)
@@ -1580,7 +1643,7 @@ def api_credentials():
             password=data.get("password"),
             api_key=data.get("api_key")
         ))
-        return return_api(result.todict(), code=201)
+        return return_api(result.todict(hide_password=True), code=201)
 
 
 @api.route('/credentials/<int:id>', methods=['GET', 'DELETE'])
@@ -1589,7 +1652,7 @@ def api_credentials():
 def api_credential(id: int):
     cred = Credentials()
     if request.method == 'GET':
-        result = cred.get_one(id).todict()
+        result = cred.get_one(id).todict(hide_password=True)
         return return_api(result)
 
     elif request.method == 'DELETE':

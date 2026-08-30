@@ -415,7 +415,10 @@ function getAllFilteredVolumeIds(api_key) {
 
 function runUpdateAll(api_key) {
 	if (!hasActiveLibraryFilter()) {
-		sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': 'update_all'});
+		sendAPI('POST', '/system/tasks', api_key, {}, {
+			'cmd': 'update_all',
+			'allow_skipping': false
+		});
 		return;
 	}
 
@@ -503,11 +506,6 @@ if (lib_options.lib_page_size !== null && lib_options.lib_page_size !== undefine
 	paginationState.pageSize = parseInt(lib_options.lib_page_size) || 50;
 }
 library_els.pagination.size.value = String(paginationState.pageSize);
-
-socket.on(
-	'mass_editor_status',
-	data => library_els.mass_edit.progress.innerText = `${data.current_item}/${data.total_items}`
-);
 
 usingApiKey()
 	.then(api_key => Promise.all([
@@ -607,9 +605,23 @@ usingApiKey()
 				'monitoring_scheme': document.querySelector('select[name="monitoring_scheme"]').value
 			});
 
-		socket.on('downloaded_status', () => fetchLibrary(api_key));
+		socket.on(
+			'downloaded_status',
+			data => {
+				const inst = new LibraryEntry(data.volume_id, api_key);
+				if (inst.list_entry === null)
+					return;
+				const new_progress = inst.getProgress();
+				new_progress[0] += data.downloaded_issues.length
+								- data.not_downloaded_issues.length;
+				inst.setProgressBar(new_progress[0], new_progress[1]);
+			}
+		);
+		socket.on(
+			'mass_editor_status',
+			data => library_els.mass_edit.progress.innerText = `${data.current_item}/${data.total_items}`
+		);
 	});
-
 library_els.search.container.action = 'javascript:searchLibrary();';
 
 library_els.mass_edit.select_all.onchange = () => {

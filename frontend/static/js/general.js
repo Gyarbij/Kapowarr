@@ -228,13 +228,14 @@ function handleTaskRemoved(data) {
 		unspinButton(task_string);
 };
 
-function connectToWebSocket() {
+function connectToWebSocket(api_key) {
 	const socket = io({
 		path: `${url_base}/api/socket.io`,
 		transports: ["polling"],
 		upgrade: false,
 		autoConnect: false,
-		closeOnBeforeunload: true
+		closeOnBeforeunload: true,
+		auth: {'api_key': api_key}
 	});
 	socket.on('connect', () => console.log('Connected to WebSocket'));
 	socket.on('disconnect', () => console.log('Disconnected from WebSocket'));
@@ -344,6 +345,7 @@ const url_base = document.querySelector('#url_base').dataset.value;
 const volume_id = parseInt(window.location.pathname.split('/').at(-1)) || null;
 mapButtons(volume_id);
 
+let socket;
 usingApiKey()
 .then(api_key => {
 	setTimeout(() => fillTaskQueue(api_key), 200);
@@ -358,11 +360,11 @@ usingApiKey()
 			}
 		})
 		.catch(() => {});
+	socket = connectToWebSocket(api_key);
 });
 
 setupLocalStorage();
 applyTheme(getLocalStorage('theme')['theme']);
-const socket = connectToWebSocket();
 
 document.querySelector('#toggle-nav').onclick = e =>
 	document.querySelector('#nav-bar').classList.toggle('show-nav');

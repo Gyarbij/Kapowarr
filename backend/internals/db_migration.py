@@ -1259,3 +1259,22 @@ def _migrate_add_release_cache_and_publisher_tables():
         )
 
     return
+
+
+@DatabaseMigrationHandler.register_handler(46)
+def _migrate_reconcile_divergent_version_44():
+    _migrate_add_volume_indexes_and_created_at()
+    _migrate_add_release_cache_and_publisher_tables()
+
+    cursor = get_db()
+    for table in ('issues_files', 'volume_files'):
+        columns = cursor.execute(
+            f"PRAGMA table_info({table});"
+        ).fetchall()
+        if 'forced' not in {column[1] for column in columns}:
+            cursor.execute(
+                f"ALTER TABLE {table} ADD COLUMN "
+                "forced BOOL NOT NULL DEFAULT 0;"
+            )
+
+    return

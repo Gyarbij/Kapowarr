@@ -92,6 +92,8 @@ class Constants:
     STATUS_FORCELIST_RETRIES = (500, 502, 503, 504)
     "The HTTP status codes for which a retry should be done"
 
+    PROXY_TEST_URL = "https://httpbin.org/ip"
+
     CV_SITE_URL = "https://comicvine.gamespot.com"
     "The base URL of ComicVine"
 
@@ -115,6 +117,9 @@ class Constants:
 
     FS_API_BASE = "/v1"
     "The base endpoint of the FlareSolverr API"
+
+    MAX_CONCURRENT_FS_SESSIONS = 2
+    "The maximum amount of FlareSolverr browser sessions that can concurrently run"
 
     CF_CHALLENGE_HEADER = ("cf-mitigated", "challenge")
     """
@@ -266,6 +271,16 @@ class StartType(BaseEnum):
     "A normal restart"
     RESTART_HOSTING_CHANGES = 132
     "A restart because changes to the hosting settings were made"
+
+
+class ProxyType(BaseEnum):
+    NONE = None
+    "Proxy disabled"
+
+    HTTP = "http"
+    HTTPS = "https"
+    SOCKS5 = "socks5"
+    SOCKS5H = "socks5h"
 
 
 class FileDate(BaseEnum):
@@ -626,7 +641,7 @@ class VolumeMetadata(TypedDict):
     issue_count: int
     translated: bool
     already_added: Union[int, None]
-    issues: Union[List['IssueMetadata'], None]
+    issues: Union[List[IssueMetadata], None]
 
 
 class PublisherMetadata(TypedDict):
@@ -683,6 +698,13 @@ class GeneralFileData(FileData):
     file_type: str
 
 
+class FileMatch(TypedDict):
+    filepath: str
+    issue_ids: List[int]
+    general_file: bool
+    forced_match: bool
+
+
 # region Dataclasses
 @dataclass
 class BlocklistEntry:
@@ -725,6 +747,9 @@ class BaseNamingKeys:
     year: Union[int, None]
     publisher: Union[str, None]
 
+    def todict(self) -> Dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass
 class VolumeNamingKeys(BaseNamingKeys):
@@ -734,7 +759,7 @@ class VolumeNamingKeys(BaseNamingKeys):
 @dataclass
 class TitlelessIssueNamingKeys(BaseNamingKeys):
     issue_comicvine_id: int
-    issue_number: Union[str, None]
+    issue_number: str
     issue_release_date: Union[str, None]
     issue_release_year: Union[int, None]
 
@@ -753,7 +778,7 @@ class IssueData:
     calculated_issue_number: float
     title: Union[str, None]
     date: Union[str, None]
-    description: Union[str, None]
+    description: str
     monitored: bool
     files: List[FileData]
 
@@ -767,11 +792,11 @@ class VolumeData:
     comicvine_id: int
     title: str
     alt_title: Union[str, None]
-    year: int
-    publisher: str
+    year: Union[int, None]
     volume_number: int
     description: str
     site_url: str
+    publisher: Union[str, None]
     monitored: bool
     monitor_new_issues: bool
     root_folder: int
@@ -802,12 +827,20 @@ class CredentialData:
             self.api_key = self.api_key.strip() or None
         return
 
-    def todict(self) -> Dict[str, Any]:
-        "Note: Will replace password with a string of stars"
+    def todict(self, hide_password: bool = False) -> Dict[str, Any]:
+        """Return a dictionary version of this dataclass.
+
+        Args:
+            hide_password (bool, optional): Replace the password with stars.
+                Defaults to False.
+
+        Returns:
+            Dict[str, Any]: The dictionary.
+        """
         result = asdict(self)
 
         result['source'] = self.source.value
-        if result['password'] is not None:
+        if result['password'] is not None and hide_password:
             result['password'] = Constants.CREDENTIAL_REPLACEMENT
 
         return result

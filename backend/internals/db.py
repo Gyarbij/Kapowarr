@@ -15,7 +15,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Type, Union
 
 from flask import g
 
-from backend.base.definitions import (Constants, DateType, FileDate,
+from backend.base.definitions import (Constants, DateType, FileDate, ProxyType,
                                       SeedingHandling, SpecialVersion, T)
 from backend.base.files import create_folder, folder_path
 from backend.base.helpers import CommaList, current_thread_id
@@ -326,6 +326,7 @@ def setup_db_adapters_and_converters() -> None:
     register_adapter(bool, lambda b: int(b))
     register_converter("BOOL", lambda b: b == b'1')
     register_adapter(CommaList, lambda c: str(c))
+    register_adapter(ProxyType, lambda e: e.value)
     register_adapter(FileDate, lambda e: e.value)
     register_adapter(SeedingHandling, lambda e: e.value)
     register_adapter(SpecialVersion, lambda e: e.value)
@@ -448,6 +449,7 @@ CREATE TABLE IF NOT EXISTS files(
 CREATE TABLE IF NOT EXISTS issues_files(
     file_id INTEGER NOT NULL,
     issue_id INTEGER NOT NULL,
+    forced BOOL NOT NULL DEFAULT 0,
 
     FOREIGN KEY (file_id) REFERENCES files(id)
         ON DELETE CASCADE,
@@ -463,6 +465,7 @@ CREATE TABLE IF NOT EXISTS volume_files(
     file_id INTEGER PRIMARY KEY,
     volume_id INTEGER NOT NULL,
     file_type VARCHAR(15) NOT NULL,
+    forced BOOL NOT NULL DEFAULT 0,
 
     FOREIGN KEY (volume_id) REFERENCES volumes(id)
         ON DELETE CASCADE,
