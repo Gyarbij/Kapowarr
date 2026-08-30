@@ -1,21 +1,24 @@
+import sqlite3
 import unittest
 from unittest.mock import MagicMock, patch
 
 from backend.base.definitions import BlocklistReason, BlocklistReasonID
+from backend.implementations import blocklist
 from backend.implementations.blocklist import add_to_blocklist, blocklist_contains
 
 
 class BlocklistRetryTest(unittest.TestCase):
     NOW = 2_000_000_000
 
-    def _contains(self, reason, added_at):
+    def _contains(self, reason, added_at, download_link=None):
         cursor = MagicMock()
         result = cursor.execute.return_value
         result.exists.return_value = 42
         result.fetchone.return_value = {
             'id': 42,
             'reason': reason.value,
-            'added_at': added_at
+            'added_at': added_at,
+            'download_link': download_link
         }
         with patch(
             'backend.implementations.blocklist.get_db',
@@ -42,6 +45,14 @@ class BlocklistRetryTest(unittest.TestCase):
 
         self.assertEqual(result, 42)
 
+    def test_page_load_failure_has_short_cooldown(self):
+        result = self._contains(
+            BlocklistReasonID.LINK_BROKEN,
+            self.NOW - 6 * 60
+        )
+
+        self.assertIsNone(result)
+
     def test_user_added_entry_never_expires(self):
         result = self._contains(
             BlocklistReasonID.ADDED_BY_USER,
@@ -56,7 +67,8 @@ class BlocklistRetryTest(unittest.TestCase):
         query.fetchone.return_value = {
             'id': 42,
             'reason': BlocklistReasonID.LINK_BROKEN.value,
-            'added_at': self.NOW - 25 * 60 * 60
+            'added_at': self.NOW - 25 * 60 * 60,
+            'download_link': 'https://files.example/example.cbz'
         }
         expected = object()
 
@@ -91,7 +103,8 @@ class BlocklistRetryTest(unittest.TestCase):
         cursor.execute.return_value.fetchone.return_value = {
             'id': 42,
             'reason': BlocklistReasonID.LINK_BROKEN.value,
-            'added_at': self.NOW - 60
+            'added_at': self.NOW - 60,
+            'download_link': None
         }
 
         with patch(
@@ -123,6 +136,43 @@ class BlocklistRetryTest(unittest.TestCase):
         self.assertEqual(
             update_call.args[1]['reason'],
             BlocklistReasonID.ADDED_BY_USER.value
+        )
+
+    def test_success_clears_only_automatic_entries(self):
+        connection = sqlite3.connect(':memory:')
+        connection.row_factory = sqlite3.Row
+        cursor = connection.cursor()
+        cursor.execute("""
+            CREATE TABLE blocklist(
+                id INTEGER PRIMARY KEY,
+                web_link TEXT,
+                download_link TEXT,
+                reason INTEGER,
+                added_at INTEGER
+            );
+        """)
+        link = 'https://getcomics.org/example/'
+        cursor.executemany(
+            'INSERT INTO blocklist VALUES (?, ?, NULL, ?, ?);',
+            (
+                (1, link, BlocklistReasonID.LINK_BROKEN.value, self.NOW),
+                (2, link, BlocklistReasonID.ADDED_BY_USER.value, self.NOW)
+            )
+        )
+
+        with patch(
+            'backend.implementations.blocklist.get_db',
+            return_value=cursor
+        ):
+            blocklist.clear_automatic_blocklist(link)
+
+        remaining = cursor.execute(
+            'SELECT id, reason FROM blocklist ORDER BY id;'
+        ).fetchall()
+        connection.close()
+        self.assertEqual(
+            [tuple(row) for row in remaining],
+            [(2, BlocklistReasonID.ADDED_BY_USER.value)]
         )
 
 

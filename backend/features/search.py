@@ -44,15 +44,16 @@ def create_search_outcome() -> SearchOutcomeData:
 
 def format_search_outcome(outcome: SearchOutcomeData) -> str:
     rejected = sum(outcome['rejections'].values())
+    failed = sum(outcome['enqueue_failures'].values())
     summary = (
-        f"Scanned {outcome['volumes_scanned']} volumes; "
-        f"{outcome['open_issues']} open monitored issues; "
-        f"{outcome['candidates_found']} candidates; "
-        f"{outcome['matched_candidates']} matched; "
-        f"{outcome['selected_links']} selected; "
-        f"{outcome['queued_links']} queued; "
+        f"{outcome['volumes_scanned']} volumes scanned; "
+        f"{outcome['open_issues']} missing monitored issues; "
+        f"{outcome['candidates_found']} candidates checked; "
+        f"{outcome['matched_candidates']} matching candidates; "
+        f"{outcome['selected_links']} download pages selected; "
+        f"{outcome['queued_links']} queue entries added; "
         f"{outcome['already_queued_links']} already queued; "
-        f"{rejected} rejected"
+        f"{rejected} non-matching alternatives"
     )
     if outcome['rejections']:
         reasons = ', '.join(
@@ -65,7 +66,7 @@ def format_search_outcome(outcome: SearchOutcomeData) -> str:
             f'{reason}: {count}'
             for reason, count in sorted(outcome['enqueue_failures'].items())
         )
-        summary += f'; enqueue failures ({failures})'
+        summary += f'; {failed} selected pages failed ({failures})'
     if outcome['volumes_skipped']:
         summary += f"; {outcome['volumes_skipped']} unmonitored volumes skipped"
     return summary
@@ -207,12 +208,21 @@ async def search_multiple_queries(*queries: str) -> List[SearchResultData]:
         duplicates removed.
     """
     async with AsyncSession() as session:
-        searches = [
-            Source(query).search(session)
+        async def search_source(Source):
+            return [
+                await Source(query).search(session)
+                for query in queries
+            ]
+
+        responses_by_source = await gather(*(
+            search_source(Source)
             for Source in get_subclasses(SearchSource)
-            for query in queries
+        ))
+        responses = [
+            response
+            for source_responses in responses_by_source
+            for response in source_responses
         ]
-        responses = await gather(*searches)
 
     search_results: List[SearchResultData] = []
     processed_links = set()

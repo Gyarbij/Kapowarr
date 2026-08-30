@@ -102,7 +102,7 @@ class Constants:
     BACKOFF_FACTOR_RETRIES = 1
     "Backoff factor for waiting in-between retries"
 
-    STATUS_FORCELIST_RETRIES = (500, 502, 503, 504)
+    STATUS_FORCELIST_RETRIES = (429, 500, 502, 503, 504)
     "The HTTP status codes for which a retry should be done"
 
     PROXY_TEST_URL = "https://httpbin.org/ip"
@@ -498,7 +498,9 @@ class BrokenClientReason(BaseEnum):
 class EnqueuingDownloadFailureReason(BaseEnum):
     "The reason a download failed to be added to the queue"
 
-    WEBPAGE_BROKEN = "Webpage unavailable"
+    WEBPAGE_BROKEN = "Webpage not found"
+    WEBPAGE_RATE_LIMITED = "GetComics temporarily rate limited the request"
+    WEBPAGE_TEMPORARILY_UNAVAILABLE = "Webpage temporarily unavailable"
     NO_MATCHES = "No links found on webpage that match to volume and are not blocklisted"
     NO_WORKING_LINKS = "All download links found on the webpage are broken"
     ONLY_RATE_LIMITED_LINKS = "All working download links on the webpage are from rate limited services"

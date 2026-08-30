@@ -18,24 +18,49 @@ from re import compile
 from subprocess import run
 from sys import base_exec_prefix, executable, maxsize, platform, version_info
 from threading import current_thread
-from typing import (TYPE_CHECKING, Any, Callable, Collection, Dict, Iterable,
-                    Iterator, List, Mapping, Sequence, Tuple, Union)
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    Sequence,
+    Tuple,
+    Union,
+)
 from unicodedata import normalize
 from urllib.parse import quote_plus, unquote
 
-from aiohttp import (ClientConnectorError, ClientError,
-                     ClientSession, ClientTimeout)
+from aiohttp import (
+    ClientConnectorError,
+    ClientError,
+    ClientResponseError,
+    ClientSession,
+    ClientTimeout,
+)
 from bencoding import bdecode
 from multidict import CIMultiDict, CIMultiDictProxy
-from requests import RequestException, Session as RSession
+from requests import RequestException
+from requests import Session as RSession
 from requests.adapters import HTTPAdapter, Retry
 from requests.structures import CaseInsensitiveDict
 from urllib3 import __version__ as urllib3_version
 from yarl import URL
 
 from backend.base.custom_exceptions import ClientNotWorking, CredentialInvalid
-from backend.base.definitions import (RAR_EXECUTABLES, BrokenClientReason,
-                                      Constants, OSType, ProxyType, T, U)
+from backend.base.definitions import (
+    RAR_EXECUTABLES,
+    BrokenClientReason,
+    Constants,
+    OSType,
+    ProxyType,
+    T,
+    U,
+)
 from backend.base.logging import LOGGER, get_log_filepath
 
 if TYPE_CHECKING:
@@ -1075,6 +1100,7 @@ class AsyncSession(ClientSession):
         self.cookie_jar.update_cookies(cf_cookies)
 
         for round in range(1, Constants.TOTAL_RETRIES + 1):
+            retry_after = None
             try:
                 response = await super()._request(*args, **kwargs)
                 LOGGER.debug(
@@ -1085,9 +1111,18 @@ class AsyncSession(ClientSession):
                 )
 
                 if response.status in Constants.STATUS_FORCELIST_RETRIES:
-                    raise ClientError
+                    retry_after = response.headers.get('Retry-After')
+                    error = ClientResponseError(
+                        response.request_info,
+                        response.history,
+                        status=response.status,
+                        message=response.reason,
+                        headers=response.headers
+                    )
+                    response.release()
+                    raise error
 
-            except (ClientError, ClientConnectorError):
+            except (ClientError, ClientConnectorError) as error:
                 if round == Constants.TOTAL_RETRIES:
                     # Exhausted retries
                     raise
@@ -1097,11 +1132,22 @@ class AsyncSession(ClientSession):
                     method, url, round + 1
                 )
 
-                await sleep(sleep_time)
-                sleep_time = (
-                    Constants.BACKOFF_FACTOR_RETRIES *
-                    (2 ** (round - 1))
-                )
+                retry_delay = sleep_time
+                if (
+                    isinstance(error, ClientResponseError)
+                    and getattr(error, 'status', None) == 429
+                ):
+                    retry_delay = max(retry_delay, 5)
+                    try:
+                        retry_delay = max(
+                            retry_delay,
+                            float(retry_after)
+                        )
+                    except (TypeError, ValueError):
+                        pass
+
+                await sleep(retry_delay)
+                sleep_time *= 2
                 continue
 
             if response.status == 403:

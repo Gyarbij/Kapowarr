@@ -482,14 +482,17 @@ function runUpdateAll(api_key) {
 function formatSearchOutcome(outcome) {
 	const rejected = Object.values(outcome.rejections || {})
 		.reduce((total, count) => total + count, 0);
+	const failed = Object.values(outcome.enqueue_failures || {})
+		.reduce((total, count) => total + count, 0);
 	const parts = [
 		`${outcome.volumes_scanned} volumes scanned`,
-		`${outcome.open_issues} open monitored issues`,
-		`${outcome.candidates_found} candidates`,
-		`${outcome.matched_candidates} matched`,
-		`${outcome.queued_links} queued`,
+		`${outcome.open_issues} missing monitored issues`,
+		`${outcome.candidates_found} candidates checked`,
+		`${outcome.matched_candidates} matching candidates`,
+		`${outcome.selected_links} download pages selected`,
+		`${outcome.queued_links} queue entries added`,
 		`${outcome.already_queued_links} already queued`,
-		`${rejected} rejected`
+		`${rejected} non-matching alternatives`
 	];
 	const rejection_reasons = Object.entries(outcome.rejections || {});
 	if (rejection_reasons.length)
@@ -498,9 +501,9 @@ function formatSearchOutcome(outcome) {
 			.join(', '));
 	const enqueue_failures = Object.entries(outcome.enqueue_failures || {});
 	if (enqueue_failures.length)
-		parts.push(enqueue_failures
+		parts.push(`${failed} selected pages failed (${enqueue_failures
 			.map(([reason, count]) => `${reason}: ${count}`)
-			.join(', '));
+			.join(', ')})`);
 	if (outcome.volumes_skipped)
 		parts.push(`${outcome.volumes_skipped} unmonitored volumes skipped`);
 	return parts.join(' · ');

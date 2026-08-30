@@ -2,10 +2,29 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from backend.features.mass_edit import MassEditorRefreshSearch, MassEditorSearch
-from backend.features.search import create_search_outcome
+from backend.features.search import create_search_outcome, format_search_outcome
 
 
 class MassEditorSearchTest(unittest.TestCase):
+    def test_summary_distinguishes_alternatives_from_page_failures(self):
+        outcome = create_search_outcome()
+        outcome.update({
+            'volumes_scanned': 43,
+            'open_issues': 66,
+            'candidates_found': 153,
+            'matched_candidates': 66,
+            'selected_links': 19,
+            'queued_links': 2,
+            'rejections': {'title_mismatch': 87},
+            'enqueue_failures': {'GetComics rate limited': 17}
+        })
+
+        summary = format_search_outcome(outcome)
+
+        self.assertIn('19 download pages selected', summary)
+        self.assertIn('87 non-matching alternatives', summary)
+        self.assertIn('17 selected pages failed', summary)
+
     @patch(
         'backend.features.mass_edit.iter_commit',
         side_effect=lambda values: values

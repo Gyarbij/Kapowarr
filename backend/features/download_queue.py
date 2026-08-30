@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from asyncio import gather, run
+from asyncio import run
 from os import listdir
 from os.path import basename, join
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Tuple, Type, Union
@@ -37,7 +37,10 @@ from backend.features.post_processing import (
     PostProcessorTorrentsComplete,
     PostProcessorTorrentsCopy,
 )
-from backend.implementations.blocklist import add_to_blocklist
+from backend.implementations.blocklist import (
+    add_to_blocklist,
+    clear_automatic_blocklist,
+)
 from backend.implementations.download_clients import (
     BaseDirectDownload,
     MegaDownload,
@@ -452,16 +455,17 @@ class DownloadHandler(metaclass=Singleton):
                 await gcp.load_data()
 
             except EnqueuingDownloadFailure as e:
-                add_to_blocklist(
-                    web_link=link,
-                    web_title=None,
-                    web_sub_title=None,
-                    download_link=None,
-                    source=None,
-                    volume_id=volume_id,
-                    issue_id=issue_id,
-                    reason=BlocklistReason.LINK_BROKEN
-                )
+                if e.reason == EnqueuingDownloadFailureReason.WEBPAGE_BROKEN:
+                    add_to_blocklist(
+                        web_link=link,
+                        web_title=None,
+                        web_sub_title=None,
+                        download_link=None,
+                        source=None,
+                        volume_id=volume_id,
+                        issue_id=issue_id,
+                        reason=BlocklistReason.LINK_BROKEN
+                    )
                 LOGGER.warning(
                     f'Unable to extract download links from source; fail_reason="{e.reason.value}"'
                 )
@@ -490,6 +494,8 @@ class DownloadHandler(metaclass=Singleton):
                 )
                 return [], e.reason
 
+            clear_automatic_blocklist(link)
+
         result = self.__prepare_downloads_for_queue(
             downloads,
             forced_match=force_match
@@ -507,10 +513,10 @@ class DownloadHandler(metaclass=Singleton):
         Union[EnqueuingDownloadFailureReason, None]
     ]]:
         async def add_wrapper():
-            return await gather(
-                *(self.add(*entry)
-                for entry in add_args)
-            )
+            return [
+                await self.add(*entry)
+                for entry in add_args
+            ]
 
         return list(run(add_wrapper()))
 

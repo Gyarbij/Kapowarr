@@ -49,10 +49,10 @@ When a GetComics release has been chosen, either by you or by Kapowarr, Kapowarr
 3. All the links in the first path are tested, to see if they work, are supported and are allowed by the blocklist. A link could not be supported because the service is simply not supported, or because it's a torrent download and no torrent client is set up. If enough links pass, all the downloads in the path are added to the queue to be downloaded. If not enough links pass, the next path is tested until one is found that passes. If none pass, the page is added to the blocklist for having no working links.
 4. When a path passes and its groups are added to the download queue, a decision needs to be made for which service is going to be used for each group (DDL, Mega, MediaFire, etc.). The ['Service Preference' setting](../settings/download.md#service-preference) decides this.
 
-Entries added automatically because a page or mirror was temporarily broken
-act as a 24-hour cooldown. Kapowarr retries them after that period and refreshes
-the entry if the failure continues. Entries explicitly added by a user never
-expire, and explicit user blocking always takes precedence over an automatic
-cooldown.
+HTTP rate limits and other temporary page-access failures are retried and do not
+create blocklist entries. A definitive missing page has a five-minute automatic
+cooldown; a broken download mirror has a 24-hour cooldown. A successful retry
+clears automatic entries for that link. Entries explicitly added by a user never
+expire, and explicit user blocking always takes precedence.
 
 If Kapowarr downloads less (or nothing at all) from a page, but you are convinced that that shouldn't be the case, read about this topic [on the FAQ page](../other_docs/faq.md#why-does-kapowarr-not-grab-the-links-from-a-getcomics-page-even-though-they-work-fine).

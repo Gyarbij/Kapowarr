@@ -51,6 +51,8 @@
 #library-scope,
 #massedit-progress {
 	min-height: 1.25rem;
+	flex: 0 0 auto;
+	overflow-y: visible;
 	margin: .35rem 1rem 0;
 	color: var(--text-color);
 	font-size: .8rem;

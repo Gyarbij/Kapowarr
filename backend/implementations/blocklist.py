@@ -15,6 +15,7 @@ from backend.base.logging import LOGGER
 from backend.internals.db import get_db
 
 AUTOMATIC_BLOCKLIST_COOLDOWN = 24 * 60 * 60
+AUTOMATIC_PAGE_FAILURE_COOLDOWN = 5 * 60
 
 
 # region Get
@@ -95,7 +96,7 @@ def get_blocklist_entry(id: int) -> BlocklistEntry:
 # region Contains and Add
 def _get_blocklist_entry_for_link(link: str):
     return get_db().execute("""
-        SELECT id, reason, added_at
+        SELECT id, reason, added_at, download_link
         FROM blocklist
         WHERE download_link = :link
             OR (web_link = :link AND download_link IS NULL)
@@ -112,8 +113,15 @@ def _blocklist_entry_is_active(entry) -> bool:
     if entry['reason'] == BlocklistReasonID.ADDED_BY_USER.value:
         return True
 
+    cooldown = AUTOMATIC_BLOCKLIST_COOLDOWN
+    if (
+        entry['reason'] == BlocklistReasonID.LINK_BROKEN.value
+        and entry['download_link'] is None
+    ):
+        cooldown = AUTOMATIC_PAGE_FAILURE_COOLDOWN
+
     return (
-        entry['added_at'] + AUTOMATIC_BLOCKLIST_COOLDOWN
+        entry['added_at'] + cooldown
         > round(time())
     )
 
@@ -258,6 +266,24 @@ def add_to_blocklist(
 
 
 # region Delete
+def clear_automatic_blocklist(link: str) -> None:
+    """Remove transient automatic blocks after a link succeeds."""
+    get_db().execute("""
+        DELETE FROM blocklist
+        WHERE reason != :user_reason
+            AND (
+                download_link = :link
+                OR (web_link = :link AND download_link IS NULL)
+            );
+        """,
+        {
+            'link': link,
+            'user_reason': BlocklistReasonID.ADDED_BY_USER.value
+        }
+    )
+    return
+
+
 def delete_blocklist() -> None:
     """Delete all blocklist entries"""
     LOGGER.info('Deleting blocklist')

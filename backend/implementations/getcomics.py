@@ -10,7 +10,7 @@ from hashlib import sha1
 from re import IGNORECASE, compile
 from typing import Callable, List, Tuple, Type, Union
 
-from aiohttp import ClientError
+from aiohttp import ClientError, ClientResponseError
 from bencoding import bencode
 from bs4 import BeautifulSoup, Tag
 
@@ -848,15 +848,39 @@ class GetComicsPage:
         async with AsyncSession() as session:
             try:
                 response = await session.get(self.link)
+                if response.status == 429:
+                    raise EnqueuingDownloadFailure(
+                        EnqueuingDownloadFailureReason.WEBPAGE_RATE_LIMITED
+                    )
                 if not response.ok:
-                    raise ClientError
+                    if response.status in (404, 410):
+                        raise EnqueuingDownloadFailure(
+                            EnqueuingDownloadFailureReason.WEBPAGE_BROKEN
+                        )
+                    raise EnqueuingDownloadFailure(
+                        EnqueuingDownloadFailureReason
+                        .WEBPAGE_TEMPORARILY_UNAVAILABLE
+                    )
 
                 soup = BeautifulSoup(await response.text(), 'html.parser')
 
-            except ClientError:
+            except ClientResponseError as error:
+                if error.status == 429:
+                    reason = (
+                        EnqueuingDownloadFailureReason.WEBPAGE_RATE_LIMITED
+                    )
+                else:
+                    reason = (
+                        EnqueuingDownloadFailureReason
+                        .WEBPAGE_TEMPORARILY_UNAVAILABLE
+                    )
+                raise EnqueuingDownloadFailure(reason) from error
+
+            except ClientError as error:
                 raise EnqueuingDownloadFailure(
-                    EnqueuingDownloadFailureReason.WEBPAGE_BROKEN
-                )
+                    EnqueuingDownloadFailureReason
+                    .WEBPAGE_TEMPORARILY_UNAVAILABLE
+                ) from error
 
         self.title = _get_title(soup)
         self.download_groups = _get_download_groups(soup)
