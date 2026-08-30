@@ -1,0 +1,132 @@
+name: Publish container images
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "**"
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Optional semantic version tag, for example v1.3.1
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: container-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'Gyarbij/Kapowarr'
+    name: Publish multi-architecture image
+    runs-on: ubuntu-latest
+    environment: container-publish
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        name: Set up checkout
+        with:
+          fetch-depth: 0
+
+      - name: Resolve semantic version
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          tag="$INPUT_TAG"
+          if [[ -z "$tag" ]]; then
+            tag="$RELEASE_TAG"
+          fi
+          if [[ -z "$tag" && "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          fi
+
+          if [[ -n "$INPUT_TAG" && ! "$INPUT_TAG" =~ ^[vV][0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Manual version tags must match vX.Y.Z or VX.Y.Z." >&2
+            exit 1
+          fi
+
+          if [[ "$tag" =~ ^[vV]([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve release tag
+        id: release
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          tag="$(printf '%s' "$RELEASE_TAG" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+          if [[ -z "$tag" ]]; then
+            tag="${GITHUB_SHA:0:12}"
+          fi
+
+          echo "tag=release-$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v4.2.0
+        name: Set up QEMU
+
+      - uses: docker/setup-buildx-action@v4.3.0
+        name: Set up Buildx
+
+      - uses: docker/login-action@v4.6.0
+        name: Log in to Azure Container Registry
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_TOKEN_PASSWORD }}
+
+      - uses: docker/login-action@v4.6.0
+        name: Log in to GitHub Container Registry
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v6.2.0
+        name: Generate image metadata
+        id: meta
+        with:
+          images: |
+            ghcr.io/gyarbij/kapowarr
+            ${{ secrets.ACR_REGISTRY }}/kapowarr
+          tags: |
+            type=ref,event=branch,prefix=branch-
+            type=ref,event=tag,prefix=tag-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.version.outputs.version != '' }}
+            type=raw,value=${{ steps.release.outputs.tag }},enable=${{ steps.release.outputs.tag != '' }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version={{version}}
+            org.opencontainers.image.created={{commit_date 'YYYY-MM-DDTHH:mm:ss.SSS[Z]'}}
+
+      - uses: docker/build-push-action@v7.3.0
+        name: Build and publish image
+        with:
+          context: .
+          file: ./Dockerfile
+          build-args: |
+            PYTHON=3.14.7
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=container-publish
+          cache-to: type=gha,mode=max,scope=container-publish
+          provenance: mode=max
+          sbom: true

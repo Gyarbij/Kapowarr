@@ -1,20 +1,20 @@
-name: Tests
+name: Kapowarr fork CI
 
 on:
   push:
     branches:
-      - development
       - main
   pull_request:
     branches:
-      - development
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   test:
+    if: github.repository == 'Gyarbij/Kapowarr'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -58,6 +58,7 @@ jobs:
           path: performance-${{ matrix.python-version }}.json
 
   quality:
+    if: github.repository == 'Gyarbij/Kapowarr'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -94,10 +95,11 @@ jobs:
         name: Build documentation
 
   container:
+    if: github.repository == 'Gyarbij/Kapowarr'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
         name: Set up checkout
 
-      - run: docker build --build-arg PYTHON=3.14.7 -t kapowarr:test .
+      - run: docker build --platform linux/amd64 --build-arg PYTHON=3.14.7 -t kapowarr:test .
         name: Build Python 3.14.7 image
