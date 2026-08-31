@@ -59,98 +59,52 @@
 }
 
 .library-toolbar {
-	min-height: auto;
-	display: grid;
-	align-items: stretch;
-	justify-content: stretch;
-	gap: .65rem;
-	overflow: visible;
-	padding-block: .65rem;
+	min-height: var(--tool-bar-height);
+	gap: .5rem;
+	padding-block: 0;
 }
 
-.library-actions {
-	display: grid;
-	grid-template-columns: 10rem 11rem 14rem 9.5rem;
-	gap: .45rem;
+.library-actions,
+.library-filters {
+	flex: 0 0 auto;
 }
 
-.library-toolbar .library-actions > button {
+.library-filters {
+	margin-left: auto;
+}
+
+.library-filters > select {
 	width: auto;
 	min-width: 0;
-	min-height: 3.25rem;
-	height: auto;
-	display: flex;
-	flex-direction: row;
-	gap: .55rem;
-	padding: .55rem .7rem;
-	border: 1px solid color-mix(in srgb, var(--nav-color) 22%, transparent);
-	border-radius: var(--border-radius);
-	background-color: color-mix(
-		in srgb,
-		var(--tool-bar-color) 82%,
-		var(--background-color)
-	);
+	width: 7rem;
+	flex: 0 0 7rem;
+	padding-inline: .35rem;
 }
 
-.library-toolbar .library-actions > button:hover {
-	background-color: color-mix(
-		in srgb,
-		var(--tool-bar-color) 68%,
-		var(--background-color)
-	);
+#status-filter {
+	width: 8.5rem;
+	flex-basis: 8.5rem;
 }
 
-.library-toolbar .library-actions > button > img {
-	width: 1.1rem;
-	flex: 0 0 1.1rem;
+#date-filter {
+	width: 8.5rem;
+	flex-basis: 8.5rem;
 }
 
-.library-toolbar .library-actions > button > div {
-	flex: 0 1 auto;
+#publisher-filter,
+#description-filter {
+	width: 7.25rem;
+	flex-basis: 7.25rem;
 }
 
-.library-toolbar .library-actions > button p {
-	font-size: .75rem;
-	line-height: 1.15;
-	text-align: left;
-	white-space: nowrap;
+#view-button {
+	width: 5.5rem;
+	flex-basis: 5.5rem;
 }
 
-.library-filter-grid {
-	width: 100%;
-	display: grid;
-	grid-template-columns:
-		minmax(0, 1.35fr) minmax(0, 1.35fr)
-		repeat(4, minmax(0, 1fr));
-	gap: .45rem;
-}
-
-.library-filter-field {
-	min-width: 0;
-	display: grid;
-	gap: .2rem;
-	color: var(--nav-color);
-}
-
-.library-filter-field > span {
-	font-size: .68rem;
-	font-weight: 500;
-}
-
-.library-filter-field > select {
-	width: 100%;
-	min-width: 0;
-	height: 2.25rem;
-	padding: .35rem .5rem;
-	border: 1px solid color-mix(in srgb, var(--nav-color) 22%, transparent);
-	border-radius: var(--border-radius);
-	background-color: color-mix(
-		in srgb,
-		var(--tool-bar-color) 82%,
-		var(--background-color)
-	);
-	color: var(--nav-color);
-	font-size: .78rem;
+#sort-button {
+	width: 6.75rem;
+	flex-basis: 6.75rem;
 }
 
 /*  */
@@ -522,22 +476,6 @@ main:has(#massedit-toggle:checked) #lib-stats {
 	cursor: pointer;
 }
 
-@media (max-width: 1180px) {
-	.library-filter-grid {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-	}
-}
-
-@media (max-width: 1000px) {
-	.library-actions {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-
-	.library-toolbar .library-actions > button p {
-		white-space: normal;
-	}
-}
-
 @media (max-width: 860px) {
 	.action-bar {
         flex-direction: column;
@@ -554,13 +492,6 @@ main:has(#massedit-toggle:checked) #lib-stats {
         flex: 1 1 auto;
     }
 }
-
-@media (max-width: 740px) {
-	.library-filter-grid {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-}
-
 @media (max-width: 535px) {
 	header {
 		justify-content: flex-start;
@@ -576,11 +507,6 @@ main:has(#massedit-toggle:checked) #lib-stats {
 }
 
 @media (max-width: 442px) {
-	.library-filter-status,
-	.library-filter-date {
-		grid-column: 1 / -1;
-	}
-
 	#library-container {
 		padding: 1rem;
 	}
