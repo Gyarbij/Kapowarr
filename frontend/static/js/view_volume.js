@@ -748,13 +748,22 @@ function _issuesCoveredByMapping(mapping, no_match_is_tbd=false) {
 
 	if (mapping.forced_match)
 		mapping_value += ' (Forced)';
+	if (!mapping_value)
+		mapping_value = no_match_is_tbd ? 'TBD' : 'Unmatched';
 
 	return mapping_value;
 }
 
+function setManagedIssuesSubmitState() {
+	const disabled = Object.keys(managed_issues_changes).length === 0;
+	document.querySelector('#submit-manage-issues').disabled = disabled;
+	document.querySelector('#submit-manage-issues-rename').disabled = disabled;
+};
+
 function showManageIssues(api_key) {
 	managed_issues_changes = {};
 	managed_issues = [];
+	setManagedIssuesSubmitState();
 	document.querySelector('#selectall-manage-input').checked = false;
 	const table = document.querySelector('#manage-issues-table tbody'),
 		volume_folder = ViewEls.vol_data.path.dataset.volume_folder;
@@ -791,8 +800,10 @@ function toggleAllManages() {
 	).forEach(e => e.checked = checked);
 };
 
-function submitManagedIssues(api_key) {
-	sendAPI('PUT', `/volumes/${volume_id}/manualmatch`, api_key, {},
+function submitManagedIssues(api_key, rename_files=false) {
+	sendAPI('PUT', `/volumes/${volume_id}/manualmatch`, api_key, {
+		rename_files: rename_files
+	},
 		Object.values(managed_issues_changes)
 	)
 	.then(response => window.location.reload());
@@ -909,6 +920,7 @@ function processIssueMatch() {
 			`#manage-issues-table tbody > tr[data-manage_id="${manageId}"] td:last-child`
 		).innerText = _issuesCoveredByMapping(data, no_match_is_tbd=true);
 	});
+	setManagedIssuesSubmitState();
 	document.querySelector('#selectall-manage-input').checked = false;
 	showWindow('manage-window');
 };
@@ -1075,6 +1087,8 @@ Promise.all([usingApiKey(), socketReady])
 
 	document.querySelector('#submit-manage-issues').onclick =
 	e => submitManagedIssues(api_key);
+	document.querySelector('#submit-manage-issues-rename').onclick =
+		e => submitManagedIssues(api_key, true);
 
 	activeSocket.on(
 		'downloaded_status',

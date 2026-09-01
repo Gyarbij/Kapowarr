@@ -17,20 +17,28 @@ from urllib.parse import unquote_plus
 from bs4 import BeautifulSoup, Tag
 from requests import RequestException, Response
 
-from backend.base.custom_exceptions import (ClientNotWorking,
-                                            CredentialInvalid,
-                                            DownloadLimitReached,
-                                            IssueNotFound, LinkBroken)
-from backend.base.definitions import (BrokenClientReason, Constants,
-                                      CredentialSource, Download,
-                                      DownloadSource, DownloadState,
-                                      DownloadType, ExternalDownload,
-                                      ExternalDownloadClient)
+from backend.base.custom_exceptions import (
+    ClientNotWorking,
+    CredentialInvalid,
+    DownloadLimitReached,
+    IssueNotFound,
+    LinkBroken,
+)
+from backend.base.definitions import (
+    BrokenClientReason,
+    Constants,
+    CredentialSource,
+    Download,
+    DownloadSource,
+    DownloadState,
+    DownloadType,
+    ExternalDownload,
+    ExternalDownloadClient,
+)
 from backend.base.helpers import Session, first_of_range, get_torrent_info
 from backend.base.logging import LOGGER
 from backend.implementations.credentials import Credentials
-from backend.implementations.direct_clients.mega import (Mega, MegaABC,
-                                                         MegaFolder)
+from backend.implementations.direct_clients.mega import Mega, MegaABC, MegaFolder
 from backend.implementations.external_clients import ExternalClients
 from backend.implementations.naming import generate_issue_name
 from backend.implementations.remote_mapping import RemoteMappings
@@ -74,6 +82,10 @@ class BaseDirectDownload(Download):
     @property
     def covered_issues(self) -> Union[float, Tuple[float, float], None]:
         return self._covered_issues
+
+    @property
+    def forced_match(self) -> bool:
+        return self._forced_match
 
     @property
     def web_link(self) -> Union[str, None]:
@@ -183,6 +195,7 @@ class BaseDirectDownload(Download):
         self._volume_id = volume_id
         self._issue_id = None
         self._covered_issues = covered_issues
+        self._forced_match = forced_match
         self._source_type = source_type
         self._source_name = source_name
         self._web_link = web_link
@@ -695,6 +708,7 @@ class MegaDownload(BaseDirectDownload):
         self._volume_id = volume_id
         self._issue_id = None
         self._covered_issues = covered_issues
+        self._forced_match = forced_match
         self._source_type = source_type
         self._source_name = source_name
         self._web_link = web_link
@@ -824,6 +838,7 @@ class TorrentDownload(ExternalDownload, BaseDirectDownload):
         self._volume_id = volume_id
         self._issue_id = None
         self._covered_issues = covered_issues
+        self._forced_match = forced_match
         self._source_type = source_type
         self._source_name = source_name
         self._web_link = web_link

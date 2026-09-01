@@ -40,7 +40,8 @@ def scan_files(
     volume_id: int,
     filepath_filter: List[str] = [],
     del_unmatched_files: bool = True,
-    update_websocket: bool = False
+    update_websocket: bool = False,
+    allow_special_version_mismatch: bool = False
 ) -> None:
     """Scan inside the volume folder for files and map them to issues.
 
@@ -141,7 +142,8 @@ def scan_files(
             file_data,
             volume_data,
             volume_issues,
-            number_to_year
+            number_to_year,
+            allow_special_version_mismatch
         ):
             continue
 
@@ -421,7 +423,12 @@ def get_file_matching(volume_id: int) -> List[FileMatch]:
     return list(current_matches.values())
 
 
-def set_file_matching(volume_id: int, matches: List[FileMatch]) -> None:
+def set_file_matching(
+    volume_id: int,
+    matches: List[FileMatch],
+    rename_files: bool = False,
+    record_event: bool = True
+) -> Dict[str, str]:
     """Set the matchings of files in a volume's folder so that they match to one
     or more issues, become a general file or are allowed to match automatically.
     For a FileMatch entry, set `forced_match` to `True` and supply the IDs of
@@ -530,23 +537,58 @@ def set_file_matching(volume_id: int, matches: List[FileMatch]) -> None:
 
     scan_files(volume_id, update_websocket=True)
 
-    if applied_matches:
+    renames: Dict[str, str] = {}
+    if rename_files and applied_matches:
+        from backend.implementations.naming import mass_rename, preview_mass_rename
+
+        applied_paths = [match['filepath'] for match in applied_matches]
+        planned_renames = preview_mass_rename(
+            volume_id,
+            filepath_filter=applied_paths,
+            rename_volume_folder=False
+        )[0]
+        renames = {
+            before: after
+            for before, after in planned_renames.items()
+            if before != after
+        }
+        mass_rename(
+            volume_id,
+            filepath_filter=applied_paths,
+            rename_volume_folder=False,
+            record_event=False
+        )
+
+    if applied_matches and record_event:
         issue_ids = {
             issue_id
             for match in applied_matches
             for issue_id in match['issue_ids']
         }
+        summary = (
+            f'Updated matching for {len(applied_matches)} '
+            f'{"file" if len(applied_matches) == 1 else "files"}'
+        )
+        if renames:
+            summary += (
+                f' and renamed {len(renames)} '
+                f'{"file" if len(renames) == 1 else "files"}'
+            )
         record_activity(
             ActivityCategory.FILE,
             ActivityEventType.FILE_MATCHED,
-            (
-                f'Updated matching for {len(applied_matches)} '
-                f'{"file" if len(applied_matches) == 1 else "files"}'
-            ),
+            summary,
             volume_id=volume_id,
             issue_id=next(iter(issue_ids)) if len(issue_ids) == 1 else None,
             origin='user',
-            details={'matches': applied_matches[:50]}
+            details={
+                'matches': applied_matches[:50],
+                'renames': [
+                    {'from': before, 'to': after}
+                    for before, after in list(renames.items())[:50]
+                ],
+                'rename_count': len(renames)
+            }
         )
 
-    return
+    return renames

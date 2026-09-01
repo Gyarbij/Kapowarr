@@ -89,22 +89,26 @@ const images = {
 // Tasks
 //
 const task_to_button = {};
+const ended_task_ids = new Set();
 function mapButtons(id) {
 	if (window.location.pathname === (url_base + '/')) {
 		task_to_button['search_all'] = {
 			'button': document.querySelector('#searchall-button'),
 			'icon': `${url_base}/static/img/search.svg`,
-			'loading_icon': `${url_base}/static/img/loading.svg`
+			'loading_icon': `${url_base}/static/img/loading.svg`,
+			'cancelable': true
 		};
 		task_to_button['refresh_search_all'] = {
 			'button': document.querySelector('#refreshsearch-button'),
 			'icon': `${url_base}/static/img/refresh.svg`,
-			'loading_icon': `${url_base}/static/img/loading.svg`
+			'loading_icon': `${url_base}/static/img/loading.svg`,
+			'cancelable': true
 		};
 		task_to_button['update_all'] = {
 			'button': document.querySelector('#updateall-button'),
 			'icon': `${url_base}/static/img/refresh.svg`,
-			'loading_icon': `${url_base}/static/img/loading.svg`
+			'loading_icon': `${url_base}/static/img/loading.svg`,
+			'cancelable': true
 		};
 
 	} else if (window.location.pathname === (url_base + '/system/tasks')) {
@@ -151,6 +155,12 @@ function mapButtons(id) {
 			};
 		});
 	};
+
+	Object.values(task_to_button).forEach(button_info => {
+		button_info.task_ids = [];
+		button_info.original_title = button_info.button.title;
+		button_info.original_label = button_info.button.querySelector('p')?.innerText;
+	});
 };
 
 function buildTaskString(task) {
@@ -174,9 +184,27 @@ function setTaskMessage(message) {
 	};
 };
 
-function spinButton(task_string) {
+function spinButton(task_string, task_id=null, task_status='running') {
 	const button_info = task_to_button[task_string];
 	const icon = button_info.button.querySelector('img');
+	if (task_id !== null && ended_task_ids.has(task_id))
+		return;
+	if (task_id !== null && !button_info.task_ids.includes(task_id))
+		button_info.task_ids.push(task_id);
+
+	if (button_info.cancelable) {
+		const stopping = task_status === 'cancelling';
+		icon.src = `${url_base}/static/img/cancel.svg`;
+		icon.classList.remove('spinning');
+		button_info.button.title = stopping
+			? `Stopping ${button_info.original_label}`
+			: `Stop ${button_info.original_label}`;
+		button_info.button.disabled = stopping;
+		button_info.button.dataset.taskId = button_info.task_ids[0] || '';
+		const label = button_info.button.querySelector('p');
+		if (label) label.innerText = stopping ? 'Stopping' : 'Stop';
+		return;
+	};
 
 	if (icon.src === button_info.loading_icon)
 		return;
@@ -185,15 +213,44 @@ function spinButton(task_string) {
 	icon.classList.add('spinning');
 };
 
-function unspinButton(task_string) {
+function unspinButton(task_string, task_id=null) {
 	const button_info = task_to_button[task_string];
 	const icon = button_info.button.querySelector('img');
+	if (task_id !== null)
+		button_info.task_ids = button_info.task_ids.filter(id => id !== task_id);
+
+	if (button_info.cancelable) {
+		if (button_info.task_ids.length) {
+			spinButton(task_string, null, 'running');
+			return;
+		};
+		icon.src = button_info.icon;
+		icon.classList.remove('spinning');
+		button_info.button.title = button_info.original_title;
+		button_info.button.disabled = false;
+		delete button_info.button.dataset.taskId;
+		const label = button_info.button.querySelector('p');
+		if (label) label.innerText = button_info.original_label;
+		return;
+	};
 
 	if (icon.src === button_info.icon)
 		return;
 
 	icon.src = button_info.icon;
 	icon.classList.remove('spinning');
+};
+
+function cancelTask(task_string, api_key) {
+	const button_info = task_to_button[task_string];
+	if (!button_info?.cancelable || !button_info.task_ids.length)
+		return false;
+
+	const task_id = button_info.task_ids[0];
+	spinButton(task_string, task_id, 'cancelling');
+	sendAPI('DELETE', `/system/tasks/${task_id}`, api_key)
+	.catch(() => fillTaskQueue(api_key));
+	return true;
 };
 
 function fillTaskQueue(api_key) {
@@ -206,10 +263,20 @@ function fillTaskQueue(api_key) {
 	})
 	.then(json => {
 		setTaskMessage(json.result.length ? json.result[0].message : '');
+		Object.values(task_to_button).forEach(button_info => {
+			if (button_info.cancelable) {
+				button_info.task_ids = [];
+				unspinButton(
+					Object.keys(task_to_button).find(
+						key => task_to_button[key] === button_info
+					)
+				);
+			};
+		});
 		json.result.forEach(task => {
 			const task_string = buildTaskString(task);
 			if (task_string in task_to_button)
-				spinButton(task_string);
+				spinButton(task_string, task.id, task.status);
 		});
 	})
 	.catch(e => {
@@ -224,15 +291,17 @@ function fillTaskQueue(api_key) {
 function handleTaskAdded(data) {
 	const task_string = buildTaskString(data);
 	if (task_string in task_to_button)
-		spinButton(task_string);
+		spinButton(task_string, data.id, data.status);
 };
 
 function handleTaskRemoved(data) {
 	setTaskMessage(data.summary || '');
+	if (data.id !== null)
+		ended_task_ids.add(data.id);
 
 	const task_string = buildTaskString(data);
 	if (task_string in task_to_button)
-		unspinButton(task_string);
+		unspinButton(task_string, data.id);
 };
 
 function connectToWebSocket(api_key) {
@@ -244,7 +313,11 @@ function connectToWebSocket(api_key) {
 		closeOnBeforeunload: true,
 		auth: {'api_key': api_key}
 	});
-	socket.on('connect', () => console.log('Connected to WebSocket'));
+	socket.on('connect', () => {
+		console.log('Connected to WebSocket');
+		ended_task_ids.clear();
+		fillTaskQueue(api_key);
+	});
 	socket.on('disconnect', () => console.log('Disconnected from WebSocket'));
 
 	socket.on('task_added', handleTaskAdded);

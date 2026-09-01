@@ -1256,6 +1256,11 @@ class Download(ABC):
 
     @property
     @abstractmethod
+    def forced_match(self) -> bool:
+        ...
+
+    @property
+    @abstractmethod
     def web_link(self) -> Union[str, None]:
         "Link to webpage for download"
         ...

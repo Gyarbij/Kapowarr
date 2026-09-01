@@ -13,7 +13,7 @@ from io import BytesIO
 from os.path import basename, dirname, exists, isdir, relpath
 from re import IGNORECASE, compile
 from time import time
-from typing import Any, Dict, List, Mapping, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Set, Tuple, Union
 
 from typing_extensions import assert_never
 
@@ -1983,7 +1983,9 @@ def determine_special_version(volume_id: int) -> SpecialVersion:
 def refresh_and_scan(
     volume_id: Union[int, None] = None,
     update_websocket: bool = False,
-    allow_skipping: bool = True
+    allow_skipping: bool = True,
+    volume_ids: Union[List[int], None] = None,
+    stop_check: Union[Callable[[], bool], None] = None
 ) -> None:
     """Refresh and scan one or more volumes, which means to pull metadata from
     the online database and to scan for files.
@@ -2003,6 +2005,12 @@ def refresh_and_scan(
             the metadata source reports.
             Defaults to True.
     """
+    def should_stop() -> bool:
+        return stop_check is not None and stop_check()
+
+    if should_stop():
+        return
+
     current_time = datetime.now()
     one_day_ago = current_time - ONE_DAY
     thirty_days_ago = current_time - THIRTY_DAYS
@@ -2016,6 +2024,26 @@ def refresh_and_scan(
             LIMIT 1;
             """,
             (volume_id,)
+        )
+
+    elif volume_ids is not None:
+        if not volume_ids:
+            return
+        placeholders = ','.join('?' for _ in volume_ids)
+        cursor.execute(
+            f"""
+            SELECT comicvine_id, id, last_cv_fetch
+            FROM volumes
+            WHERE id IN ({placeholders})
+                AND last_cv_fetch <= ?
+            ORDER BY last_cv_fetch ASC;
+            """,
+            (
+                *volume_ids,
+                one_day_ago.timestamp()
+                if allow_skipping else
+                current_time.timestamp(),
+            )
         )
 
     else:
@@ -2044,10 +2072,14 @@ def refresh_and_scan(
     }
 
     # Update volumes
+    if should_stop():
+        return
     cv = ComicVine()
     volume_datas = filtered_volume_datas = run(
         cv.fetch_volumes(tuple(cv_to_id_fetch.keys()))
     )
+    if should_stop():
+        return
 
     if not volume_id and allow_skipping:
         cv_id_to_issue_count: Dict[int, int] = dict(cursor.execute("""
@@ -2113,11 +2145,15 @@ def refresh_and_scan(
         ))
 
     commit()
+    if should_stop():
+        return
 
     # Update issues
     issue_datas = run(cv.fetch_issues(
         tuple(vd["comicvine_id"] for vd in filtered_volume_datas)
     ))
+    if should_stop():
+        return
     monitor_issues_volume_ids: Set[int] = set(first_of_subarrays(cursor.execute(
         "SELECT id FROM volumes WHERE monitor_new_issues = 1;"
     )))
@@ -2162,6 +2198,8 @@ def refresh_and_scan(
         ))
 
     commit()
+    if should_stop():
+        return
 
     # Delete issues from DB that aren't found in response
     volume_issues_fetched: Dict[int, Set[int]] = {}
@@ -2212,6 +2250,8 @@ def refresh_and_scan(
     )
 
     commit()
+    if should_stop():
+        return
 
     # Scan for files
     if volume_id:
@@ -2227,23 +2267,31 @@ def refresh_and_scan(
         if not total_count:
             return
 
-        with PortablePool(max_processes=min(
+        batch_size = min(
             Constants.DB_MAX_CONCURRENT_CONNECTIONS,
             total_count
-        )) as pool:
-            if update_websocket:
-                ws = WebSocket()
-                for idx, _ in enumerate(
-                    pool.istarmap_unordered(scan_files, v_ids)
-                ):
-                    ws.emit(TaskStatusEvent(
-                        f'Scanned files for volume {idx+1}/{total_count}'
-                    ))
+        )
+        scanned_count = 0
+        for batch_start in range(0, total_count, batch_size):
+            if should_stop():
+                break
+            batch = v_ids[batch_start:batch_start + batch_size]
+            with PortablePool(max_processes=len(batch)) as pool:
+                if update_websocket:
+                    ws = WebSocket()
+                    for _ in pool.istarmap_unordered(scan_files, batch):
+                        scanned_count += 1
+                        ws.emit(TaskStatusEvent(
+                            'Scanned files for volume '
+                            f'{scanned_count}/{total_count}'
+                        ))
 
-            else:
-                pool.starmap(scan_files, v_ids)
+                else:
+                    pool.starmap(scan_files, batch)
+                    scanned_count += len(batch)
 
-        FilesDB.delete_unmatched_files()
+        if not should_stop():
+            FilesDB.delete_unmatched_files()
 
     for local_id, _ in cv_to_id_fetch.values():
         issues_before, files_before = activity_counts_before[local_id]

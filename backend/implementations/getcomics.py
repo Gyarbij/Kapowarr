@@ -616,6 +616,15 @@ async def __purify_download_group(
         limit of a service was reached.
     """
     limit_reached = False
+    covered_issues = group["info"]["issue_number"]
+    if forced_match and issue_id is not None:
+        covered_issues = (
+            Volume(volume_id)
+            .get_issue(issue_id)
+            .get_data()
+            .calculated_issue_number
+        )
+
     for source, links in group['links'].items():
         for link in iter_commit(links):
             try:
@@ -643,7 +652,7 @@ async def __purify_download_group(
                 dl_instance: Download = DownloadClass(
                     download_link=pure_link,
                     volume_id=volume_id,
-                    covered_issues=group["info"]["issue_number"],
+                    covered_issues=covered_issues,
                     source_type=source, # type: ignore
                     source_name=source.value,
                     web_link=web_link,

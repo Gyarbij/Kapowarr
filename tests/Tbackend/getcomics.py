@@ -1,8 +1,13 @@
 import unittest
+from asyncio import run
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from bs4 import BeautifulSoup
 
+from backend.base.definitions import GCDownloadSource
 from backend.base.helpers import normalise_query_string
+from backend.implementations import getcomics
 from backend.implementations.getcomics import _get_articles, _get_max_page
 from backend.implementations.matching import match_title
 
@@ -44,6 +49,44 @@ class GetComicsParsingTest(unittest.TestCase):
         )
         self.assertTrue(match_title('Pokemon – Classics', 'Pokémon Classics'))
         self.assertFalse(match_title('Pokemon Classics', 'Pokemon Adventures'))
+
+    @patch('backend.implementations.getcomics.iter_commit')
+    @patch('backend.implementations.getcomics.Volume')
+    @patch(
+        'backend.implementations.getcomics.__purify_link',
+        new_callable=AsyncMock
+    )
+    def test_forced_issue_download_preserves_explicit_issue(
+        self,
+        purify_link,
+        volume,
+        iter_commit
+    ):
+        download_class = MagicMock()
+        purify_link.return_value = ('https://example.test/file', download_class)
+        iter_commit.side_effect = lambda links: iter(links)
+        volume.return_value.get_issue.return_value.get_data.return_value = (
+            SimpleNamespace(calculated_issue_number=4.0)
+        )
+        group = {
+            'web_sub_title': 'Special edition',
+            'info': {'issue_number': None},
+            'links': {GCDownloadSource.GETCOMICS: ['https://example.test']}
+        }
+
+        run(getattr(getcomics, '__purify_download_group')(
+            group,
+            volume_id=1,
+            issue_id=44,
+            web_link='https://example.test/release',
+            web_title='Example release',
+            forced_match=True
+        ))
+
+        self.assertEqual(
+            download_class.call_args.kwargs['covered_issues'],
+            4.0
+        )
 
 
 if __name__ == '__main__':

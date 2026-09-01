@@ -461,13 +461,14 @@ class RemovedFromQueueEvent(WebSocketEvent):
 class TaskAddedEvent(WebSocketEvent):
     "A task has been added to the queue"
 
-    def __init__(self, task: Task) -> None:
+    def __init__(self, task: Task, task_id: Union[int, None] = None) -> None:
         """Create the event.
 
         Args:
             task (Task): The task that has been added.
         """
         self.task = task
+        self.task_id = task_id
         return
 
     def get_type(self) -> WebSocketEventType:
@@ -475,7 +476,9 @@ class TaskAddedEvent(WebSocketEvent):
 
     def get_body(self) -> Dict[str, Any]:
         result = {
+            "id": self.task_id,
             "action": self.task.action,
+            "status": "queued",
             "volume_id": self.task.volume_id,
             "issue_id": self.task.issue_id
         }
@@ -512,24 +515,37 @@ class TaskEndedEvent(WebSocketEvent):
     has been cancelled
     """
 
-    def __init__(self, task: Task) -> None:
+    def __init__(
+        self,
+        task: Task,
+        task_id: Union[int, None] = None,
+        cancelled: bool = False
+    ) -> None:
         """Create the event.
 
         Args:
             task (Task): The task that has been finished or cancelled.
         """
         self.task = task
+        self.task_id = task_id
+        self.cancelled = cancelled
         return
 
     def get_type(self) -> WebSocketEventType:
         return WebSocketEventType.TASK_ENDED
 
     def get_body(self) -> Dict[str, Any]:
-        return {
+        result = {
+            "id": self.task_id,
             "action": self.task.action,
             "volume_id": self.task.volume_id,
-            "issue_id": self.task.issue_id
+            "issue_id": self.task.issue_id,
+            "cancelled": self.cancelled
         }
+        summary = getattr(self.task, 'summary', None)
+        if summary is not None:
+            result['summary'] = summary
+        return result
 
 
 class MassEditorStatusEvent(WebSocketEvent):

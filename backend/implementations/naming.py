@@ -717,7 +717,8 @@ def same_name_indexing(
 def preview_mass_rename(
     volume_id: int,
     issue_id: Union[int, None] = None,
-    filepath_filter: Union[List[str], None] = None
+    filepath_filter: Union[List[str], None] = None,
+    rename_volume_folder: bool = True
 ) -> Tuple[Dict[str, str], Union[str, None]]:
     """Determine what the new filenames would be, if they aren't already
     following the format.
@@ -748,7 +749,7 @@ def preview_mass_rename(
         # Rename for volume
         files = volume.get_all_files()
 
-        if not volume_data.custom_folder:
+        if rename_volume_folder and not volume_data.custom_folder:
             root_folder = RootFolders()[volume_data.root_folder]
             volume_folder = generate_volume_folder_path(
                 root_folder, volume_data
@@ -841,7 +842,8 @@ def mass_rename(
     filepath_filter: Union[List[str], None] = None,
     update_websocket: bool = False,
     process_individual_files: bool = True,
-    record_event: bool = True
+    record_event: bool = True,
+    rename_volume_folder: bool = True
 ) -> List[str]:
     """Rename files so that they follow the naming formats.
 
@@ -870,7 +872,8 @@ def mass_rename(
     """
     all_namings, new_volume_folder = preview_mass_rename(
         volume_id, issue_id,
-        filepath_filter
+        filepath_filter,
+        rename_volume_folder
     )
     renames = {
         before: after

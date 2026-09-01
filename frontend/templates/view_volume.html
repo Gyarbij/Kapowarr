@@ -285,7 +285,8 @@
 	{% endset %}
 	{% set manage_issues_submit %}
 		<button id="show-issue-match" type="button">Set Match</button>
-		<button id="submit-manage-issues" type="submit">Save</button>
+		<button id="submit-manage-issues" type="submit" disabled>Save</button>
+		<button id="submit-manage-issues-rename" type="submit" disabled>Save & Rename</button>
 	{% endset %}
 	{{ window(True, "manage-window", "Manage Issues", manage_issues_content, manage_issues_submit) }}
 

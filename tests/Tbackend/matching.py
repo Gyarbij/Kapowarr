@@ -7,7 +7,10 @@ from backend.base.definitions import (
     SpecialVersion,
     VolumeData,
 )
-from backend.implementations.matching import check_search_result_match
+from backend.implementations.matching import (
+    check_search_result_match,
+    file_importing_filter,
+)
 
 
 class SearchResultMatchingTest(unittest.TestCase):
@@ -124,6 +127,30 @@ class SearchResultMatchingTest(unittest.TestCase):
 
         self.assertFalse(match['match'])
         self.assertEqual(match['match_reason_code'], 'blocklisted')
+
+    def test_file_import_override_only_bypasses_special_version(self):
+        file_data = self._result(issue_number=1.0)
+        file_data['special_version'] = SpecialVersion.TPB
+
+        self.assertFalse(file_importing_filter(
+            file_data, self.volume, self.issues, self.number_to_year
+        ))
+        self.assertTrue(file_importing_filter(
+            file_data,
+            self.volume,
+            self.issues,
+            self.number_to_year,
+            allow_special_version_mismatch=True
+        ))
+
+        file_data['year'] = 1999
+        self.assertFalse(file_importing_filter(
+            file_data,
+            self.volume,
+            self.issues,
+            self.number_to_year,
+            allow_special_version_mismatch=True
+        ))
 
 
 if __name__ == '__main__':

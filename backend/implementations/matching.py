@@ -327,7 +327,8 @@ def file_importing_filter(
     file_data: FilenameData,
     volume_data: VolumeData,
     volume_issues: List[IssueData],
-    number_to_year: Mapping[float, Union[int, None]]
+    number_to_year: Mapping[float, Union[int, None]],
+    allow_special_version_mismatch: bool = False
 ) -> bool:
     """Filter for matching files to volumes.
 
@@ -351,11 +352,14 @@ def file_importing_filter(
     else:
         issue_number = float('-inf')
 
-    matching_special_version = match_special_version(
-        volume_data.special_version,
-        file_data['special_version'],
-        volume_data.title,
-        file_data['issue_number']
+    matching_special_version = (
+        allow_special_version_mismatch
+        or match_special_version(
+            volume_data.special_version,
+            file_data['special_version'],
+            volume_data.title,
+            file_data['issue_number']
+        )
     )
 
     matching_volume_number = match_volume_number(

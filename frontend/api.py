@@ -417,6 +417,27 @@ def api_tasks():
                 raise InvalidKeyValue('allow_skipping', allow_skipping)
             kwargs['allow_skipping'] = allow_skipping
 
+        if task.action in (
+            'update_all',
+            'search_all',
+            'refresh_search_all'
+        ):
+            volume_ids = data.get('volume_ids')
+            if volume_ids is not None:
+                if not (
+                    isinstance(volume_ids, list)
+                    and all(
+                        isinstance(volume_id, int)
+                        and not isinstance(volume_id, bool)
+                        for volume_id in volume_ids
+                    )
+                ):
+                    raise InvalidKeyValue('volume_ids', volume_ids)
+                volume_ids = list(dict.fromkeys(volume_ids))
+                for volume_id in volume_ids:
+                    Library.get_volume(volume_id)
+                kwargs['volume_ids'] = volume_ids
+
         task_instance = task(**kwargs)
         result = task_handler.add(task_instance)
         return return_api({'id': result}, code=201)
@@ -1123,6 +1144,7 @@ def api_manual_match(id: int):
 
     elif request.method == 'PUT':
         file_matching_changes = request.get_json()
+        rename_files = extract_key(request, 'rename_files', False) or False
         if not isinstance(file_matching_changes, list):
             raise InvalidKeyValue('body', file_matching_changes)
 
@@ -1144,9 +1166,13 @@ def api_manual_match(id: int):
             ):
                 raise InvalidKeyValue('body', file_matching_changes)
 
-        set_file_matching(id, file_matching_changes)
+        renames = set_file_matching(
+            id,
+            file_matching_changes,
+            rename_files=rename_files
+        )
 
-        return return_api({})
+        return return_api({'renames': renames})
 
 
 # =====================

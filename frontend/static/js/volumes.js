@@ -449,15 +449,17 @@ function getAllFilteredVolumeIds(api_key) {
 }
 
 function runUpdateAll(api_key) {
+	if (cancelTask('update_all', api_key)) return;
+
 	if (!hasActiveLibraryFilter()) {
 		sendAPI('POST', '/system/tasks', api_key, {}, {
 			'cmd': 'update_all',
 			'allow_skipping': false
-		});
+		})
+		.then(() => fillTaskQueue(api_key));
 		return;
 	}
 
-	showLibraryPage(library_els.pages.loading);
 	library_els.mass_edit.progress.innerText = '';
 
 	getAllFilteredVolumeIds(api_key)
@@ -468,13 +470,14 @@ function runUpdateAll(api_key) {
 				return;
 			}
 
-			return sendAPI('POST', '/masseditor', api_key, {}, {
-				'volume_ids': volume_ids,
-				'action': 'update',
-				'args': {}
-			}).then(() => {
+			return sendAPI('POST', '/system/tasks', api_key, {}, {
+				'cmd': 'update_all',
+				'allow_skipping': false,
+				'volume_ids': volume_ids
+			})
+			.then(() => {
+				fillTaskQueue(api_key);
 				library_els.mass_edit.progress.innerText = `Queued update for ${volume_ids.length} filtered volumes`;
-				fetchLibrary(api_key);
 			});
 		});
 }
@@ -510,14 +513,17 @@ function formatSearchOutcome(outcome) {
 }
 
 function runSearchMissing(api_key, refresh=false) {
+	const task_name = refresh ? 'refresh_search_all' : 'search_all';
+	if (cancelTask(task_name, api_key)) return;
+
 	if (!hasActiveLibraryFilter()) {
 		sendAPI('POST', '/system/tasks', api_key, {}, {
-			'cmd': refresh ? 'refresh_search_all' : 'search_all'
-		});
+			'cmd': task_name
+		})
+		.then(() => fillTaskQueue(api_key));
 		return;
 	}
 
-	showLibraryPage(library_els.pages.loading);
 	library_els.mass_edit.progress.innerText = '';
 
 	getAllFilteredVolumeIds(api_key)
@@ -528,17 +534,13 @@ function runSearchMissing(api_key, refresh=false) {
 				return;
 			}
 
-			return sendAPI('POST', '/masseditor', api_key, {}, {
+			return sendAPI('POST', '/system/tasks', api_key, {}, {
 				'volume_ids': volume_ids,
-				'action': refresh ? 'refresh_search' : 'search',
-				'args': {}
+				'cmd': task_name
 			})
-			.then(response => response.json())
-			.then(json => {
-				const summary = formatSearchOutcome(json.result);
-				return fetchLibrary(api_key).then(() => {
-					library_els.mass_edit.progress.innerText = summary;
-				});
+			.then(() => {
+				fillTaskQueue(api_key);
+				library_els.mass_edit.progress.innerText = `Queued search for ${volume_ids.length} filtered volumes`;
 			});
 		});
 }
@@ -730,6 +732,14 @@ Promise.all([usingApiKey(), socketReady])
 				? formatSearchOutcome(data.summary)
 				: `${data.current_item}/${data.total_items}`
 		);
+		activeSocket.on('task_ended', data => {
+			if ([
+				'update_all',
+				'search_all',
+				'refresh_search_all'
+			].includes(data.action))
+				fetchLibrary(api_key);
+		});
 	});
 library_els.search.container.action = 'javascript:searchLibrary();';
 

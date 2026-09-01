@@ -7,7 +7,7 @@ The post-download processing (a.k.a. post-processing or PP) of downloads.
 from __future__ import annotations
 
 from os.path import basename, exists, isfile, join, splitext
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, List
 
 from backend.base.definitions import (
     ActivityCategory,
@@ -28,7 +28,7 @@ from backend.implementations.blocklist import add_to_blocklist
 from backend.implementations.conversion import mass_convert
 from backend.implementations.converters import extract_files_from_folder
 from backend.implementations.download_clients import TorrentDownload
-from backend.implementations.file_matching import scan_files
+from backend.implementations.file_matching import scan_files, set_file_matching
 from backend.implementations.file_processing import mass_process_files
 from backend.implementations.naming import mass_rename
 from backend.implementations.volumes import Volume
@@ -57,10 +57,48 @@ def remove_from_queue(download: Download) -> None:
     return
 
 
+def _get_download_issue_ids(download: Download) -> List[int]:
+    if not download.files:
+        return []
+
+    placeholders = ','.join('?' for _ in download.files)
+    return [
+        row[0]
+        for row in get_db().execute(
+            f"""
+            SELECT DISTINCT if.issue_id
+            FROM issues_files if
+            INNER JOIN files f ON f.id = if.file_id
+            INNER JOIN issues i ON i.id = if.issue_id
+            WHERE i.volume_id = ?
+                AND f.filepath IN ({placeholders})
+            ORDER BY if.issue_id;
+            """,
+            (download.volume_id, *download.files)
+        )
+    ]
+
+
 def record_download_activity(download: Download) -> None:
     "Record the final outcome of a download"
     success = download.state != DownloadState.FAILED_STATE
     replaced_path = download.activity_replaced_path
+    matched_issue_ids = _get_download_issue_ids(download) if success else []
+    intended_issue_id = download.issue_id
+    issue_id = intended_issue_id
+    if issue_id is None and len(matched_issue_ids) == 1:
+        issue_id = matched_issue_ids[0]
+    needs_manual_match = (
+        success
+        and download.forced_match
+        and (
+            not matched_issue_ids
+            or (
+                intended_issue_id is not None
+                and intended_issue_id not in matched_issue_ids
+            )
+        )
+    )
 
     if not success:
         event_type = ActivityEventType.DOWNLOAD_FAILED
@@ -71,13 +109,15 @@ def record_download_activity(download: Download) -> None:
     else:
         event_type = ActivityEventType.DOWNLOAD_SUCCEEDED
         summary = f'Downloaded {download.title}'
+    if needs_manual_match:
+        summary += ' (needs issue match)'
 
     record_activity(
         ActivityCategory.DOWNLOAD,
         event_type,
         summary,
         volume_id=download.volume_id,
-        issue_id=download.issue_id,
+        issue_id=issue_id,
         success=success,
         origin='download',
         details={
@@ -87,7 +127,11 @@ def record_download_activity(download: Download) -> None:
             'source': download.source_type.value,
             'source_name': download.source_name,
             'files': list(download.files),
-            'replaced_path': replaced_path
+            'replaced_path': replaced_path,
+            'forced_match': download.forced_match,
+            'intended_issue_id': intended_issue_id,
+            'matched_issue_ids': matched_issue_ids,
+            'needs_manual_match': needs_manual_match
         }
     )
     return
@@ -95,11 +139,43 @@ def record_download_activity(download: Download) -> None:
 
 def add_file_to_database(download: Download) -> None:
     "Register files in database and match to a volume/issue"
+    _match_download_files(download)
+    return
+
+
+def _match_download_files(download: Download) -> None:
     scan_files(
         download.volume_id,
         filepath_filter=download.files,
-        update_websocket=True
+        update_websocket=True,
+        allow_special_version_mismatch=download.forced_match
     )
+
+    if not download.forced_match or download.issue_id is None:
+        return
+
+    unmatched_files = [
+        filepath
+        for filepath in download.files
+        if (
+            isfile(filepath)
+            and FilesDB.volume_of_file(filepath) is None
+        )
+    ]
+    if unmatched_files:
+        set_file_matching(
+            download.volume_id,
+            [
+                {
+                    'filepath': filepath,
+                    'issue_ids': [download.issue_id],
+                    'general_file': False,
+                    'forced_match': True
+                }
+                for filepath in unmatched_files
+            ],
+            record_event=False
+        )
     return
 
 
@@ -172,11 +248,7 @@ def move_torrent_to_dest(download: TorrentDownload) -> None:
     if not download.files:
         return
 
-    scan_files(
-        download.volume_id,
-        filepath_filter=download.files,
-        update_websocket=True
-    )
+    _match_download_files(download)
 
     rename_files = Settings().sv.rename_downloaded_files
     if rename_files:
@@ -226,11 +298,7 @@ def copy_file_torrent(download: TorrentDownload) -> None:
     if not download.files:
         return
 
-    scan_files(
-        download.volume_id,
-        filepath_filter=download.files,
-        update_websocket=True
-    )
+    _match_download_files(download)
 
     rename_files = Settings().sv.rename_downloaded_files
     if rename_files:
