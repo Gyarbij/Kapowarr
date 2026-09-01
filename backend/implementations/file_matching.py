@@ -8,16 +8,25 @@ from collections import Counter
 from os.path import basename, isdir
 from typing import Dict, List, Set, Tuple, Union
 
-from backend.base.definitions import (FileConstants, FileMatch,
-                                      GeneralFileType, SpecialVersion)
-from backend.base.file_extraction import (extract_filename_data,
-                                          refine_special_version)
-from backend.base.files import (create_folder, delete_empty_child_folders,
-                                delete_empty_parent_folders,
-                                folder_is_inside_folder, list_files)
-from backend.base.helpers import (extract_year_from_date,
-                                  filtered_iter, force_range)
+from backend.base.definitions import (
+    ActivityCategory,
+    ActivityEventType,
+    FileConstants,
+    FileMatch,
+    GeneralFileType,
+    SpecialVersion,
+)
+from backend.base.file_extraction import extract_filename_data, refine_special_version
+from backend.base.files import (
+    create_folder,
+    delete_empty_child_folders,
+    delete_empty_parent_folders,
+    folder_is_inside_folder,
+    list_files,
+)
+from backend.base.helpers import extract_year_from_date, filtered_iter, force_range
 from backend.base.logging import LOGGER
+from backend.features.activity_history import record_activity
 from backend.implementations.matching import file_importing_filter
 from backend.implementations.root_folders import RootFolders
 from backend.internals.db import commit, get_db
@@ -432,9 +441,17 @@ def set_file_matching(volume_id: int, matches: List[FileMatch]) -> None:
         (volume_id,)
     ).fetchone()[0]
 
+    applied_matches = []
     for file_match in matches:
         if not folder_is_inside_folder(volume_folder, file_match['filepath']):
             continue
+
+        applied_matches.append({
+            'filepath': file_match['filepath'],
+            'forced_match': file_match['forced_match'],
+            'general_file': file_match['general_file'],
+            'issue_ids': list(file_match['issue_ids'])
+        })
 
         # Add file to database if needed; get file ID
         file_id = FilesDB.add_file(file_match["filepath"])
@@ -512,5 +529,24 @@ def set_file_matching(volume_id: int, matches: List[FileMatch]) -> None:
                 )
 
     scan_files(volume_id, update_websocket=True)
+
+    if applied_matches:
+        issue_ids = {
+            issue_id
+            for match in applied_matches
+            for issue_id in match['issue_ids']
+        }
+        record_activity(
+            ActivityCategory.FILE,
+            ActivityEventType.FILE_MATCHED,
+            (
+                f'Updated matching for {len(applied_matches)} '
+                f'{"file" if len(applied_matches) == 1 else "files"}'
+            ),
+            volume_id=volume_id,
+            issue_id=next(iter(issue_ids)) if len(issue_ids) == 1 else None,
+            origin='user',
+            details={'matches': applied_matches[:50]}
+        )
 
     return

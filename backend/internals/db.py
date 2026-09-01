@@ -518,24 +518,34 @@ CREATE TABLE IF NOT EXISTS download_queue(
     FOREIGN KEY (external_client_id) REFERENCES external_download_clients(id),
     FOREIGN KEY (volume_id) REFERENCES volumes(id)
 );
-CREATE TABLE IF NOT EXISTS download_history(
-    web_link TEXT,
-    web_title TEXT,
-    web_sub_title TEXT,
-    file_title TEXT,
+CREATE TABLE IF NOT EXISTS activity_history(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at INTEGER NOT NULL CHECK (created_at > 0),
+    category VARCHAR(30) NOT NULL,
+    event_type VARCHAR(50) NOT NULL,
+    summary TEXT NOT NULL,
 
     volume_id INTEGER,
     issue_id INTEGER,
+    file_id INTEGER,
+    volume_comicvine_id INTEGER,
+    issue_comicvine_id INTEGER,
+    volume_title TEXT,
+    volume_year INTEGER,
+    issue_number TEXT,
+    issue_title TEXT,
+    file_path TEXT,
 
-    source VARCHAR(25),
-    downloaded_at INTEGER NOT NULL CHECK (downloaded_at > 0),
     success BOOL,
-
-    FOREIGN KEY (volume_id) REFERENCES volumes(id)
-        ON DELETE SET NULL,
-    FOREIGN KEY (issue_id) REFERENCES issues(id)
-        ON DELETE SET NULL
+    origin VARCHAR(30) NOT NULL DEFAULT 'system',
+    details TEXT NOT NULL DEFAULT '{}'
 );
+CREATE INDEX IF NOT EXISTS activity_history_created_at_index
+    ON activity_history(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS activity_history_volume_index
+    ON activity_history(volume_id, id DESC);
+CREATE INDEX IF NOT EXISTS activity_history_issue_index
+    ON activity_history(issue_id, id DESC);
 CREATE TABLE IF NOT EXISTS task_history(
     task_name NOT NULL,
     display_title NOT NULL,

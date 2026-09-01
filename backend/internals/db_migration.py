@@ -1377,3 +1377,94 @@ def _migrate_add_release_discovery():
         );
     """)
     return
+
+
+@DatabaseMigrationHandler.register_handler(49)
+def _migrate_unify_activity_history():
+    cursor = get_db()
+    cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS activity_history(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at INTEGER NOT NULL CHECK (created_at > 0),
+            category VARCHAR(30) NOT NULL,
+            event_type VARCHAR(50) NOT NULL,
+            summary TEXT NOT NULL,
+
+            volume_id INTEGER,
+            issue_id INTEGER,
+            file_id INTEGER,
+            volume_comicvine_id INTEGER,
+            issue_comicvine_id INTEGER,
+            volume_title TEXT,
+            volume_year INTEGER,
+            issue_number TEXT,
+            issue_title TEXT,
+            file_path TEXT,
+
+            success BOOL,
+            origin VARCHAR(30) NOT NULL DEFAULT 'system',
+            details TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS activity_history_created_at_index
+            ON activity_history(created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS activity_history_volume_index
+            ON activity_history(volume_id, id DESC);
+        CREATE INDEX IF NOT EXISTS activity_history_issue_index
+            ON activity_history(issue_id, id DESC);
+    """)
+
+    legacy_history_exists = cursor.execute("""
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'download_history';
+    """).fetchone()
+    if legacy_history_exists is None:
+        return
+
+    cursor.executescript("""
+        INSERT INTO activity_history(
+            created_at, category, event_type, summary,
+            volume_id, issue_id,
+            volume_comicvine_id, issue_comicvine_id,
+            volume_title, volume_year, issue_number, issue_title,
+            success, origin, details
+        )
+        SELECT
+            dh.downloaded_at,
+            'download',
+            CASE
+                WHEN dh.success = 0 THEN 'download_failed'
+                ELSE 'download_succeeded'
+            END,
+            CASE
+                WHEN dh.success = 0 THEN 'Download failed: '
+                ELSE 'Downloaded '
+            END || COALESCE(
+                dh.file_title, dh.web_title, 'unknown download'
+            ),
+            dh.volume_id,
+            dh.issue_id,
+            v.comicvine_id,
+            i.comicvine_id,
+            v.title,
+            v.year,
+            i.issue_number,
+            i.title,
+            dh.success,
+            'download',
+            json_object(
+                'web_link', dh.web_link,
+                'web_title', dh.web_title,
+                'web_sub_title', dh.web_sub_title,
+                'file_title', dh.file_title,
+                'source', dh.source,
+                'legacy', json('true')
+            )
+        FROM download_history dh
+        LEFT JOIN volumes v ON v.id = dh.volume_id
+        LEFT JOIN issues i ON i.id = dh.issue_id
+        ORDER BY dh.downloaded_at, dh.rowid;
+
+        DROP TABLE download_history;
+    """)
+    return

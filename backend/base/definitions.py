@@ -275,6 +275,39 @@ class WebSocketEventType(BaseEnum):
     "A change in what issues are marked as downloaded and which aren't"
 
 
+class ActivityCategory(BaseEnum):
+    "The type of entity changed by an activity event"
+
+    VOLUME = "volume"
+    ISSUE = "issue"
+    FILE = "file"
+    DOWNLOAD = "download"
+
+
+class ActivityEventType(BaseEnum):
+    "A durable, user-visible library activity"
+
+    VOLUME_ADDED = "volume_added"
+    VOLUME_UPDATED = "volume_updated"
+    VOLUME_MONITORING_CHANGED = "volume_monitoring_changed"
+    VOLUME_ROOT_FOLDER_CHANGED = "volume_root_folder_changed"
+    VOLUME_FOLDER_CHANGED = "volume_folder_changed"
+    VOLUME_SCAN_COMPLETED = "volume_scan_completed"
+    VOLUME_DELETED = "volume_deleted"
+
+    ISSUE_MONITORING_CHANGED = "issue_monitoring_changed"
+
+    FILE_MATCHED = "file_matched"
+    FILE_DELETED = "file_deleted"
+    FILES_IMPORTED = "files_imported"
+    FILES_RENAMED = "files_renamed"
+    FILES_CONVERTED = "files_converted"
+
+    DOWNLOAD_SUCCEEDED = "download_succeeded"
+    DOWNLOAD_FAILED = "download_failed"
+    DOWNLOAD_REPLACED = "download_replaced"
+
+
 class StartType(BaseEnum):
     "The reason for or cause of starting up"
 
@@ -1193,6 +1226,8 @@ class ExternalDownloadClient(ABC):
 class Download(ABC):
     identifier: str
     "An identifier for the specific download implementation (e.g. 'mf_folder')"
+    activity_replaced_path: Union[str, None] = None
+    "The existing destination replaced during post-processing, if any"
 
     @property
     @abstractmethod

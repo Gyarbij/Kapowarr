@@ -12,23 +12,42 @@ from string import Formatter
 from typing import Dict, List, Tuple, Type, Union
 
 from backend.base.custom_exceptions import InvalidKeyValue, IssueNotFound
-from backend.base.definitions import (SV_TO_FULL_TERM, SV_TO_SHORT_TERM,
-                                      BaseNamingKeys, Constants, FileConstants,
-                                      IssueData, IssueNamingKeys, OSType,
-                                      SpecialVersion, TitlelessIssueNamingKeys,
-                                      VolumeData, VolumeNamingKeys)
-from backend.base.file_extraction import (cover_regex, extract_filename_data,
-                                          extract_issue_number, page_regex,
-                                          page_regex_2)
-from backend.base.files import (clean_filepath_simple, clean_filepath_smartly,
-                                clean_filestring_simple,
-                                clean_filestring_smartly,
-                                delete_empty_child_folders,
-                                delete_empty_parent_folders, list_files,
-                                rename_file)
-from backend.base.helpers import (extract_year_from_date,
-                                  filtered_iter, force_range)
+from backend.base.definitions import (
+    SV_TO_FULL_TERM,
+    SV_TO_SHORT_TERM,
+    ActivityCategory,
+    ActivityEventType,
+    BaseNamingKeys,
+    Constants,
+    FileConstants,
+    IssueData,
+    IssueNamingKeys,
+    OSType,
+    SpecialVersion,
+    TitlelessIssueNamingKeys,
+    VolumeData,
+    VolumeNamingKeys,
+)
+from backend.base.file_extraction import (
+    cover_regex,
+    extract_filename_data,
+    extract_issue_number,
+    page_regex,
+    page_regex_2,
+)
+from backend.base.files import (
+    clean_filepath_simple,
+    clean_filepath_smartly,
+    clean_filestring_simple,
+    clean_filestring_smartly,
+    delete_empty_child_folders,
+    delete_empty_parent_folders,
+    list_files,
+    rename_file,
+)
+from backend.base.helpers import extract_year_from_date, filtered_iter, force_range
 from backend.base.logging import LOGGER
+from backend.features.activity_history import record_activity
 from backend.implementations.file_processing import mass_process_files
 from backend.implementations.matching import file_importing_filter, match_title
 from backend.implementations.root_folders import RootFolders
@@ -821,7 +840,8 @@ def mass_rename(
     issue_id: Union[int, None] = None,
     filepath_filter: Union[List[str], None] = None,
     update_websocket: bool = False,
-    process_individual_files: bool = True
+    process_individual_files: bool = True,
+    record_event: bool = True
 ) -> List[str]:
     """Rename files so that they follow the naming formats.
 
@@ -899,4 +919,30 @@ def mass_rename(
         "Renamed volume %d %s",
         volume_id, f"issue {issue_id}" if issue_id else ""
     )
+    if record_event:
+        rename_details = [
+            {'from': before, 'to': after}
+            for before, after in list(renames.items())[:50]
+        ]
+        summary = (
+            f'Renamed {len(renames)} '
+            f'{"file" if len(renames) == 1 else "files"}'
+            if renames else
+            'Renamed volume folder'
+        )
+        record_activity(
+            ActivityCategory.FILE,
+            ActivityEventType.FILES_RENAMED,
+            summary,
+            volume_id=volume_id,
+            issue_id=issue_id,
+            origin='user',
+            details={
+                'renames': rename_details,
+                'rename_count': len(renames),
+                'additional_count': max(0, len(renames) - 50),
+                'volume_folder_from': volume_data.folder,
+                'volume_folder_to': new_volume_folder
+            }
+        )
     return list(all_namings.values())

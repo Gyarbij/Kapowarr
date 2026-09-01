@@ -1,51 +1,64 @@
 {% extends "base.html" %}
-{% from "base.html" import icon_button, page_turner %}
-{% block title %}History{% endblock %}
+{% from "base.html" import icon_button, window %}
+{% block title %}Activity{% endblock %}
 {% block css %}
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/window.css') }}">
 	<link rel="stylesheet" href="{{ url_for('static', filename='css/history.css') }}">
 {% endblock %}
 {% block js %}
+	<script src="{{ url_for('static', filename='js/window.js') }}" defer></script>
+	<script src="{{ url_for('static', filename='js/activity_history.js') }}" defer></script>
 	<script src="{{ url_for('static', filename='js/history.js') }}" defer></script>
 {% endblock %}
 
-{% block pre_build_rows %}
-<tr class="history-entry">
-	<td>
-		<a href="" target="_blank"></a>
-	</td>
-    <td>
-        <a></a>
-    </td>
-    <td></td>
-	<td></td>
-	<td></td>
-</tr>
-{% endblock %}
+{% block windows %}
+	{% set clear_content %}
+		<p>Clear all activity history? This cannot be undone.</p>
+	{% endset %}
+	{% set clear_submit %}
+		<button id="submit-clear-history" type="button">Clear</button>
+	{% endset %}
+	{{ window(False, "clear-history-window", "Clear activity history", clear_content, clear_submit) }}
+{% endblock windows %}
 
 {% block main %}
 <main>
 	<section class="tool-bar-container" aria-label="Tool bar">
 		<div class="tool-bar">
 			{{ icon_button("refresh-button", "Refresh the list", "refresh.svg", "Refresh") }}
-			{{ icon_button("clear-button", "Clear History", "delete.svg", "Clear History") }}
+			{{ icon_button("clear-button", "Clear Activity", "delete.svg", "Clear Activity") }}
+		</div>
+		<div class="activity-filters">
+			<select id="history-category" aria-label="Activity category">
+				<option value="">All activity</option>
+				<option value="volume">Series</option>
+				<option value="issue">Issues</option>
+				<option value="file">Files</option>
+				<option value="download">Downloads</option>
+			</select>
+			<select id="history-result" aria-label="Activity result">
+				<option value="">All results</option>
+				<option value="true">Successful</option>
+				<option value="false">Failed</option>
+			</select>
 		</div>
 	</section>
-	<div class="main-window">
-		{{ page_turner() }}
-		<div class="table-container">
-			<table>
+	<div class="history-main">
+		<p id="history-status" class="activity-status">Loading activity...</p>
+		<div class="activity-table-container hidden">
+			<table class="activity-table">
 				<thead>
 					<tr>
-						<th>Link</th>
-                        <th>File</th>
-                        <th>Source</th>
-						<th>Downloaded At</th>
-						<th>State</th>
+						<th>Time</th>
+						<th>Type</th>
+						<th>Series / Issue</th>
+						<th>Change</th>
 					</tr>
 				</thead>
 				<tbody id="history"></tbody>
 			</table>
 		</div>
+		<button id="history-load-more" class="activity-load-more hidden" type="button">Load more</button>
 	</div>
 </main>
 {% endblock main %}

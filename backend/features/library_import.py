@@ -6,19 +6,32 @@ from itertools import chain
 from os.path import abspath, basename, dirname, isfile, join, splitext
 from typing import Any, Dict, List, Union
 
-from backend.base.custom_exceptions import (CVRateLimitReached,
-                                            InvalidKeyValue,
-                                            VolumeAlreadyAdded)
-from backend.base.definitions import (CVFileMapping, FileConstants,
-                                      FilenameData, MonitorScheme,
-                                      SpecialVersion)
+from backend.base.custom_exceptions import (
+    CVRateLimitReached,
+    InvalidKeyValue,
+    VolumeAlreadyAdded,
+)
+from backend.base.definitions import (
+    ActivityCategory,
+    ActivityEventType,
+    CVFileMapping,
+    FileConstants,
+    FilenameData,
+    MonitorScheme,
+    SpecialVersion,
+)
 from backend.base.file_extraction import extract_filename_data
-from backend.base.files import (change_basefolder, common_folder,
-                                delete_empty_parent_folders,
-                                folder_is_inside_folder,
-                                list_files, rename_file)
+from backend.base.files import (
+    change_basefolder,
+    common_folder,
+    delete_empty_parent_folders,
+    folder_is_inside_folder,
+    list_files,
+    rename_file,
+)
 from backend.base.helpers import force_suffix
 from backend.base.logging import LOGGER
+from backend.features.activity_history import record_activity
 from backend.implementations.comicvine import ComicVine
 from backend.implementations.file_matching import scan_files
 from backend.implementations.naming import mass_rename
@@ -299,6 +312,28 @@ def import_library(
 
         if rename_files:
             # Rename the filenames themselves
-            mass_rename(volume_id, filepath_filter=files)
+            files = mass_rename(
+                volume_id,
+                filepath_filter=files,
+                record_event=False
+            )
+
+        record_activity(
+            ActivityCategory.FILE,
+            ActivityEventType.FILES_IMPORTED,
+            (
+                f'Imported {len(files)} '
+                f'{"file" if len(files) == 1 else "files"}'
+            ),
+            volume_id=volume_id,
+            origin='user',
+            details={
+                'files': files[:50],
+                'file_count': len(files),
+                'additional_count': max(0, len(files) - 50),
+                'renamed': rename_files,
+                'volume_already_added': volume_already_added
+            }
+        )
 
     return

@@ -7,14 +7,23 @@ The post-download processing (a.k.a. post-processing or PP) of downloads.
 from __future__ import annotations
 
 from os.path import basename, exists, isfile, join, splitext
-from time import time
 from typing import TYPE_CHECKING, Dict
 
-from backend.base.definitions import (BlocklistReason,
-                                      DownloadState, FileConstants)
-from backend.base.files import (copy_directory, delete_file_folder,
-                                rename_file, set_detected_extension)
+from backend.base.definitions import (
+    ActivityCategory,
+    ActivityEventType,
+    BlocklistReason,
+    DownloadState,
+    FileConstants,
+)
+from backend.base.files import (
+    copy_directory,
+    delete_file_folder,
+    rename_file,
+    set_detected_extension,
+)
 from backend.base.logging import LOGGER
+from backend.features.activity_history import record_activity
 from backend.implementations.blocklist import add_to_blocklist
 from backend.implementations.conversion import mass_convert
 from backend.implementations.converters import extract_files_from_folder
@@ -48,32 +57,37 @@ def remove_from_queue(download: Download) -> None:
     return
 
 
-def add_to_history(download: Download) -> None:
-    "Add the download to history in the database"
-    get_db().execute(
-        """
-        INSERT INTO download_history(
-            web_link, web_title, web_sub_title,
-            file_title,
-            volume_id, issue_id,
-            source, downloaded_at, success
-        ) VALUES (
-            :web_link, :web_title, :web_sub_title,
-            :file_title,
-            :volume_id, :issue_id,
-            :source, :downloaded_at, :success
-        );
-        """,
-        {
+def record_download_activity(download: Download) -> None:
+    "Record the final outcome of a download"
+    success = download.state != DownloadState.FAILED_STATE
+    replaced_path = download.activity_replaced_path
+
+    if not success:
+        event_type = ActivityEventType.DOWNLOAD_FAILED
+        summary = f'Download failed: {download.title}'
+    elif replaced_path:
+        event_type = ActivityEventType.DOWNLOAD_REPLACED
+        summary = f'Downloaded and replaced {download.title}'
+    else:
+        event_type = ActivityEventType.DOWNLOAD_SUCCEEDED
+        summary = f'Downloaded {download.title}'
+
+    record_activity(
+        ActivityCategory.DOWNLOAD,
+        event_type,
+        summary,
+        volume_id=download.volume_id,
+        issue_id=download.issue_id,
+        success=success,
+        origin='download',
+        details={
             'web_link': download.web_link,
             'web_title': download.web_title,
             'web_sub_title': download.web_sub_title,
-            'file_title': download.title,
-            'volume_id': download.volume_id,
-            'issue_id': download.issue_id,
             'source': download.source_type.value,
-            'downloaded_at': round(time()),
-            'success': download.state != DownloadState.FAILED_STATE
+            'source_name': download.source_name,
+            'files': list(download.files),
+            'replaced_path': replaced_path
         }
     )
     return
@@ -132,6 +146,7 @@ def move_to_dest(download: Download) -> None:
         LOGGER.warning(
             f'The file/folder {file_dest} already exists; replacing with downloaded file'
         )
+        download.activity_replaced_path = file_dest
         delete_file_folder(file_dest)
 
     rename_file(download.files[0], file_dest)
@@ -168,7 +183,8 @@ def move_torrent_to_dest(download: TorrentDownload) -> None:
         download.files = mass_rename(
             download.volume_id,
             filepath_filter=download.files,
-            process_individual_files=False
+            process_individual_files=False,
+            record_event=False
         )
 
     return
@@ -197,6 +213,7 @@ def copy_file_torrent(download: TorrentDownload) -> None:
         LOGGER.warning(
             f'The file/folder {file_dest} already exists; replacing with downloaded file'
         )
+        download.activity_replaced_path = file_dest
         delete_file_folder(file_dest)
 
     copy_directory(download.files[0], file_dest)
@@ -220,7 +237,8 @@ def copy_file_torrent(download: TorrentDownload) -> None:
         download.files = mass_rename(
             download.volume_id,
             filepath_filter=download.files,
-            process_individual_files=False
+            process_individual_files=False,
+            record_event=False
         )
 
     return
@@ -267,7 +285,8 @@ def convert_file(download: Download) -> None:
         download.issue_id,
         filepath_filter=download.files,
         update_websocket_files=True,
-        process_individual_files=False
+        process_individual_files=False,
+        record_event=False
     )
     return
 
@@ -286,12 +305,12 @@ def set_file_properties(download: Download) -> None:
 class PostProcessor:
     actions_success = [
         remove_from_queue,
-        add_to_history,
         move_to_dest,
         rename_with_proper_extension,
         add_file_to_database,
         convert_file,
-        set_file_properties
+        set_file_properties,
+        record_download_activity
     ]
 
     actions_seeding = []
@@ -307,13 +326,13 @@ class PostProcessor:
 
     actions_failed = [
         remove_from_queue,
-        add_to_history,
+        record_download_activity,
         delete_file
     ]
 
     actions_perm_failed = [
         remove_from_queue,
-        add_to_history,
+        record_download_activity,
         add_dl_to_blocklist,
         delete_file
     ]
@@ -366,10 +385,10 @@ class PostProcessor:
 class PostProcessorTorrentsComplete(PostProcessor):
     actions_success = [
         remove_from_queue,
-        add_to_history,
         move_torrent_to_dest,
         convert_file,
-        set_file_properties
+        set_file_properties,
+        record_download_activity
     ]
 
 
@@ -380,9 +399,9 @@ class PostProcessorTorrentsCopy(PostProcessor):
     ]
 
     actions_seeding = [
-        add_to_history,
         copy_file_torrent,
         convert_file,
         set_file_properties,
+        record_download_activity,
         reset_file_link
     ]

@@ -15,12 +15,17 @@ from zipfile import ZipFile
 
 from backend.base.definitions import Constants, FileConstants, FileConverter
 from backend.base.file_extraction import extract_filename_data
-from backend.base.files import (archive_contains_issues, create_folder,
-                                create_zip_archive,
-                                delete_empty_parent_folders,
-                                delete_file_folder, generate_archive_folder,
-                                list_files, rename_file,
-                                set_detected_extension)
+from backend.base.files import (
+    archive_contains_issues,
+    create_folder,
+    create_zip_archive,
+    delete_empty_parent_folders,
+    delete_file_folder,
+    generate_archive_folder,
+    list_files,
+    rename_file,
+    set_detected_extension,
+)
 from backend.base.helpers import run_rar
 from backend.base.logging import LOGGER
 from backend.implementations.file_matching import scan_files
@@ -366,7 +371,8 @@ def zip_to_folder(file: str) -> List[str]:
         scan_files(volume_id, filepath_filter=resulting_files)
         resulting_files = mass_rename(
             volume_id,
-            filepath_filter=resulting_files
+            filepath_filter=resulting_files,
+            record_event=False
         )
 
     delete_file_folder(file)
@@ -491,7 +497,8 @@ def rar_to_folder(file: str) -> List[str]:
         scan_files(volume_id, filepath_filter=resulting_files)
         resulting_files = mass_rename(
             volume_id,
-            filepath_filter=resulting_files
+            filepath_filter=resulting_files,
+            record_event=False
         )
 
     delete_file_folder(file)

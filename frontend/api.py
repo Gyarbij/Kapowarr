@@ -9,6 +9,8 @@ from flask import Blueprint, request, send_file
 
 from backend.base.custom_exceptions import InvalidKeyValue, KeyNotFound, TaskNotFound
 from backend.base.definitions import (
+    ActivityCategory,
+    ActivityEventType,
     BlocklistReason,
     BlocklistReasonID,
     CredentialData,
@@ -27,11 +29,11 @@ from backend.base.definitions import (
 )
 from backend.base.helpers import hash_credential
 from backend.base.logging import LOGGER, get_log_file_contents
-from backend.features.download_queue import (
-    DownloadHandler,
-    delete_download_history,
-    get_download_history,
+from backend.features.activity_history import (
+    delete_activity_history,
+    get_activity_history,
 )
+from backend.features.download_queue import DownloadHandler
 from backend.features.library_import import import_library, propose_library_import
 from backend.features.mass_edit import run_mass_editor_action
 from backend.features.search import manual_search
@@ -185,7 +187,7 @@ def extract_key(request, key: str, check_existence: bool = True) -> Any:
 
         elif key in (
             'root_folder_id', 'root_folder',
-            'offset', 'limit', 'index',
+            'offset', 'limit', 'index', 'before_id',
             'page', 'per_page'
         ):
             try:
@@ -1050,7 +1052,7 @@ def api_volume(id: int):
             k: v
             for k, v in edit_info.items()
             if k not in ('root_folder', 'volume_folder', 'monitoring_scheme')
-        })
+        }, from_public=True)
         return return_api(None)
 
     elif request.method == 'DELETE':
@@ -1100,7 +1102,7 @@ def api_issues(id: int):
         edit_info: dict = request.get_json()
         monitored = edit_info.get('monitored')
         if monitored is not None:
-            issue.update({'monitored': monitored})
+            issue.update({'monitored': monitored}, from_public=True)
 
         result = issue.get_data()
         return return_api(result)
@@ -1728,19 +1730,61 @@ def api_delete_download(download_id: int):
 @api.route('/activity/history', methods=['GET', 'DELETE'])
 @error_handler
 @auth
-def api_download_history():
+def api_activity_history():
     if request.method == 'GET':
         volume_id: int = extract_key(request, 'volume_id', False)
         issue_id: int = extract_key(request, 'issue_id', False)
-        offset: int = extract_key(request, 'offset', False)
-        result = get_download_history(
-            volume_id, issue_id,
-            offset
+        before_id: int = extract_key(request, 'before_id', False)
+        limit_value = request.values.get('limit', '50')
+        category_value = request.values.get('category')
+        event_type_value = request.values.get('event_type')
+        success_value = request.values.get('success')
+
+        try:
+            limit = int(limit_value)
+            if limit < 1 or limit > 100:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise InvalidKeyValue('limit', limit_value)
+
+        try:
+            category = (
+                ActivityCategory(category_value)
+                if category_value else None
+            )
+        except ValueError:
+            raise InvalidKeyValue('category', category_value)
+
+        try:
+            event_type = (
+                ActivityEventType(event_type_value)
+                if event_type_value else None
+            )
+        except ValueError:
+            raise InvalidKeyValue('event_type', event_type_value)
+
+        if success_value is None:
+            success = None
+        elif success_value == 'true':
+            success = True
+        elif success_value == 'false':
+            success = False
+        else:
+            raise InvalidKeyValue('success', success_value)
+
+        result = get_activity_history(
+            before_id=before_id,
+            volume_id=volume_id,
+            issue_id=issue_id,
+            category=category,
+            event_type=event_type,
+            success=success,
+            limit=limit
         )
         return return_api(result)
 
     elif request.method == 'DELETE':
-        delete_download_history()
+        delete_activity_history()
         return return_api({})
 
 

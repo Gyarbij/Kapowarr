@@ -10,7 +10,7 @@ from asyncio import run
 from datetime import datetime, timedelta
 from functools import lru_cache
 from io import BytesIO
-from os.path import dirname, exists, isdir, relpath
+from os.path import basename, dirname, exists, isdir, relpath
 from re import IGNORECASE, compile
 from time import time
 from typing import Any, Dict, List, Mapping, Set, Tuple, Union
@@ -27,6 +27,8 @@ from backend.base.custom_exceptions import (
     VolumeNotFound,
 )
 from backend.base.definitions import (
+    ActivityCategory,
+    ActivityEventType,
     BaseEnum,
     Constants,
     FileData,
@@ -56,6 +58,7 @@ from backend.base.helpers import (
     to_number_cv_id,
 )
 from backend.base.logging import LOGGER
+from backend.features.activity_history import record_activity
 from backend.implementations.comicvine import ComicVine
 from backend.implementations.file_matching import scan_files
 from backend.implementations.file_processing import mass_process_files
@@ -245,15 +248,43 @@ class Issue:
             KeyNotFound: Key doesn't exist or can't be changed.
             InvalidKeyValue: Value of the key is not allowed.
         """
+        issue_data = self.get_data()
         formatted_data = {}
         for key, value in data.items():
             formatted_data[key] = self.__format_value(key, value, from_public)
 
+        changes = {
+            key: {'from': getattr(issue_data, key), 'to': value}
+            for key, value in formatted_data.items()
+            if getattr(issue_data, key) != value
+        }
+        if not changes:
+            return
+
         cursor = get_db()
-        for key, value in formatted_data.items():
+        for key, value in (
+            (key, change['to'])
+            for key, change in changes.items()
+        ):
             cursor.execute(
                 f"UPDATE issues SET {key} = ? WHERE id = ?;",
                 (value, self.id)
+            )
+
+        if from_public:
+            monitored = changes.get('monitored', {}).get('to')
+            record_activity(
+                ActivityCategory.ISSUE,
+                ActivityEventType.ISSUE_MONITORING_CHANGED,
+                (
+                    f"{'Enabled' if monitored else 'Disabled'} monitoring "
+                    f'for issue #{issue_data.issue_number}'
+                ),
+                volume_id=issue_data.volume_id,
+                issue_id=self.id,
+                origin='user',
+                details={'changes': changes},
+                cursor=cursor
             )
 
         LOGGER.info(
@@ -628,11 +659,49 @@ class Volume:
             for key, value in data.items()
         }
 
+        volume_data = self.get_data()
+        changes = {
+            key: {'from': getattr(volume_data, key), 'to': value}
+            for key, value in formatted_data.items()
+            if getattr(volume_data, key) != value
+        }
+        if not changes:
+            return
+
         cursor = get_db()
-        for key, value in formatted_data.items():
+        for key, value in (
+            (key, change['to'])
+            for key, change in changes.items()
+        ):
             cursor.execute(
                 f"UPDATE volumes SET {key} = ? WHERE id = ?;",
                 (value, self.id)
+            )
+
+        if from_public:
+            monitored = changes.get('monitored')
+            if monitored and len(changes) == 1:
+                event_type = ActivityEventType.VOLUME_MONITORING_CHANGED
+                summary = (
+                    f"{'Enabled' if monitored['to'] else 'Disabled'} "
+                    'volume monitoring'
+                )
+            else:
+                event_type = ActivityEventType.VOLUME_UPDATED
+                fields = ', '.join(
+                    key.replace('_', ' ')
+                    for key in changes
+                )
+                summary = f'Updated volume settings: {fields}'
+
+            record_activity(
+                ActivityCategory.VOLUME,
+                event_type,
+                summary,
+                volume_id=self.id,
+                origin='user',
+                details={'changes': changes},
+                cursor=cursor
             )
 
         LOGGER.info(
@@ -657,13 +726,25 @@ class Volume:
         )
         return
 
-    def apply_monitor_scheme(self, monitoring_scheme: MonitorScheme) -> None:
+    def apply_monitor_scheme(
+        self,
+        monitoring_scheme: MonitorScheme,
+        record_event: bool = True
+    ) -> None:
         """Apply a monitoring scheme to the issues of the volume.
 
         Args:
             monitoring_scheme (MonitorScheme): The monitoring scheme to apply.
         """
         cursor = get_db()
+        issue_count, monitored_before = cursor.execute(
+            """
+            SELECT COUNT(*), COALESCE(SUM(monitored), 0)
+            FROM issues
+            WHERE volume_id = ?;
+            """,
+            (self.id,)
+        ).fetchone()
 
         if monitoring_scheme == MonitorScheme.NONE:
             cursor.execute("""
@@ -704,6 +785,33 @@ class Volume:
 
         else:
             assert_never(monitoring_scheme)
+
+        monitored_after = cursor.execute(
+            """
+            SELECT COALESCE(SUM(monitored), 0)
+            FROM issues
+            WHERE volume_id = ?;
+            """,
+            (self.id,)
+        ).fetchone()[0]
+        if record_event and monitored_before != monitored_after:
+            record_activity(
+                ActivityCategory.ISSUE,
+                ActivityEventType.ISSUE_MONITORING_CHANGED,
+                (
+                    f'Applied {monitoring_scheme.value} monitoring scheme: '
+                    f'{monitored_after} of {issue_count} issues monitored'
+                ),
+                volume_id=self.id,
+                origin='user',
+                details={
+                    'scheme': monitoring_scheme.value,
+                    'monitored_before': monitored_before,
+                    'monitored_after': monitored_after,
+                    'issue_count': issue_count
+                },
+                cursor=cursor
+            )
 
         return
 
@@ -786,6 +894,19 @@ class Volume:
 
         mass_process_files(self.id)
 
+        record_activity(
+            ActivityCategory.VOLUME,
+            ActivityEventType.VOLUME_ROOT_FOLDER_CHANGED,
+            'Changed root folder',
+            volume_id=self.id,
+            origin='user',
+            details={
+                'from': str(current_root_folder),
+                'to': str(new_root_folder),
+                'files_moved': len(file_changes)
+            }
+        )
+
         return
 
     def change_volume_folder(
@@ -865,6 +986,19 @@ class Volume:
 
         mass_process_files(self.id)
 
+        record_activity(
+            ActivityCategory.VOLUME,
+            ActivityEventType.VOLUME_FOLDER_CHANGED,
+            'Changed volume folder',
+            volume_id=self.id,
+            origin='user',
+            details={
+                'from': current_volume_folder,
+                'to': new_volume_folder,
+                'files_moved': len(file_changes)
+            }
+        )
+
         return
 
     def delete(self, delete_folder: bool = False) -> None:
@@ -896,8 +1030,10 @@ class Volume:
             raise VolumeDownloadedFor(self.id)
 
         volume_data = self.get_data()
+        issue_count = len(self.get_issues())
+        files = self.get_all_files()
         if delete_folder and exists(volume_data.folder):
-            for f in self.get_all_files():
+            for f in files:
                 delete_file_folder(f["filepath"])
 
             delete_empty_child_folders(volume_data.folder)
@@ -906,13 +1042,37 @@ class Volume:
                 RootFolders()[volume_data.root_folder]
             )
 
-        # Delete file entries
-        # ON DELETE CASCADE will take care of issues_files
-        FilesDB.delete_linked_files(self.id)
-
-        # Delete metadata entries
-        # ON DELETE CASCADE will take care of issues
-        get_db().execute("DELETE FROM volumes WHERE id = ?", (self.id,))
+        cursor = get_db()
+        with cursor:
+            # ON DELETE CASCADE will take care of file and issue links.
+            FilesDB.delete_linked_files(self.id)
+            cursor.execute(
+                """
+                UPDATE activity_history
+                SET volume_id = NULL, issue_id = NULL
+                WHERE volume_id = ?;
+                """,
+                (self.id,)
+            )
+            cursor.execute("DELETE FROM volumes WHERE id = ?", (self.id,))
+            record_activity(
+                ActivityCategory.VOLUME,
+                ActivityEventType.VOLUME_DELETED,
+                f'Deleted {volume_data.title}',
+                origin='user',
+                snapshot={
+                    'volume_comicvine_id': volume_data.comicvine_id,
+                    'volume_title': volume_data.title,
+                    'volume_year': volume_data.year
+                },
+                details={
+                    'deleted_volume_id': self.id,
+                    'delete_folder': delete_folder,
+                    'issue_count': issue_count,
+                    'file_count': len(files)
+                },
+                cursor=cursor
+            )
 
         return
 
@@ -1664,9 +1824,25 @@ class Library:
                 create_folder(folder)
                 scan_files(volume_id)
 
-            volume.apply_monitor_scheme(monitor_scheme)
+            volume.apply_monitor_scheme(monitor_scheme, record_event=False)
 
             mass_process_files(volume_id)
+
+            record_activity(
+                ActivityCategory.VOLUME,
+                ActivityEventType.VOLUME_ADDED,
+                f'Added {vd["title"]}',
+                volume_id=volume_id,
+                origin='user',
+                details={
+                    'monitor_scheme': monitor_scheme.value,
+                    'monitored': monitored,
+                    'monitor_new_issues': monitor_new_issues,
+                    'root_folder': root_folder.folder,
+                    'auto_search': auto_search
+                },
+                cursor=cursor
+            )
 
         if auto_search:
             from backend.features.tasks import AutoSearchVolume, TaskHandler
@@ -1683,6 +1859,35 @@ class Library:
 
 
 # region Refresh & Scan
+def _get_activity_counts(cursor, volume_id: int) -> Tuple[int, int]:
+    return cursor.execute(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM issues WHERE volume_id = ?),
+            (
+                SELECT COUNT(*)
+                FROM (
+                    SELECT if.file_id
+                    FROM issues_files if
+                    INNER JOIN issues i ON i.id = if.issue_id
+                    WHERE i.volume_id = ?
+                    UNION
+                    SELECT file_id
+                    FROM volume_files
+                    WHERE volume_id = ?
+                )
+            );
+        """,
+        (volume_id, volume_id, volume_id)
+    ).fetchone()
+
+
+def _describe_count_change(name: str, difference: int) -> str:
+    action = 'added' if difference > 0 else 'removed'
+    count = abs(difference)
+    return f'{count} {name if count == 1 else name + "s"} {action}'
+
+
 def determine_special_version(volume_id: int) -> SpecialVersion:
     """Determine what Special Version a volume is, if any.
 
@@ -1833,6 +2038,10 @@ def refresh_and_scan(
     }
     if not cv_to_id_fetch:
         return
+    activity_counts_before = {
+        local_id: _get_activity_counts(cursor, local_id)
+        for local_id, _ in cv_to_id_fetch.values()
+    }
 
     # Update volumes
     cv = ComicVine()
@@ -2036,6 +2245,35 @@ def refresh_and_scan(
 
         FilesDB.delete_unmatched_files()
 
+    for local_id, _ in cv_to_id_fetch.values():
+        issues_before, files_before = activity_counts_before[local_id]
+        issues_after, files_after = _get_activity_counts(cursor, local_id)
+        issue_difference = issues_after - issues_before
+        file_difference = files_after - files_before
+        if not issue_difference and not file_difference:
+            continue
+
+        changes = []
+        if issue_difference:
+            changes.append(_describe_count_change('issue', issue_difference))
+        if file_difference:
+            changes.append(_describe_count_change('file', file_difference))
+
+        record_activity(
+            ActivityCategory.VOLUME,
+            ActivityEventType.VOLUME_SCAN_COMPLETED,
+            f'Refreshed series: {", ".join(changes)}',
+            volume_id=local_id,
+            origin='system',
+            details={
+                'issues_before': issues_before,
+                'issues_after': issues_after,
+                'files_before': files_before,
+                'files_after': files_after
+            },
+            cursor=cursor
+        )
+
     return
 
 
@@ -2057,6 +2295,10 @@ def delete_issue_file(file_id: int) -> None:
         delete_file_folder(file_data["filepath"])
 
     cursor = get_db()
+    matched_issue_ids: List[int] = first_of_subarrays(cursor.execute(
+        "SELECT issue_id FROM issues_files WHERE file_id = ?;",
+        (file_id,)
+    ))
     not_downloaded_issues: List[int] = first_of_subarrays(cursor.execute("""
         WITH matched_file_counts AS (
             SELECT
@@ -2090,5 +2332,28 @@ def delete_issue_file(file_id: int) -> None:
         )
 
     FilesDB.delete_file(file_id)
+
+    issue_id = (
+        matched_issue_ids[0]
+        if len(matched_issue_ids) == 1
+        else None
+    )
+    record_activity(
+        ActivityCategory.FILE,
+        ActivityEventType.FILE_DELETED,
+        f'Deleted {basename(file_data["filepath"])}',
+        volume_id=volume_id or None,
+        issue_id=issue_id,
+        origin='user',
+        snapshot={'file_path': file_data['filepath']},
+        details={
+            'deleted_file_id': file_id,
+            'affected_issue_ids': matched_issue_ids,
+            'issues_unmonitored': (
+                not_downloaded_issues if unmonitor_deleted_issues else []
+            )
+        },
+        cursor=cursor
+    )
 
     return

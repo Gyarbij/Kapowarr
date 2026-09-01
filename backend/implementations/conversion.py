@@ -7,9 +7,10 @@ Handling of converting files to a different format.
 from itertools import chain
 from typing import Dict, Iterator, List, Union
 
+from backend.base.definitions import ActivityCategory, ActivityEventType
 from backend.base.helpers import PortablePool, filtered_iter
-from backend.implementations.converters import (ConvertersManager,
-                                                ProposedConversion)
+from backend.features.activity_history import record_activity
+from backend.implementations.converters import ConvertersManager, ProposedConversion
 from backend.implementations.file_matching import scan_files
 from backend.implementations.file_processing import mass_process_files
 from backend.implementations.volumes import Volume
@@ -88,7 +89,8 @@ def mass_convert(
     filepath_filter: List[str] = [],
     update_websocket_progress: bool = False,
     update_websocket_files: bool = False,
-    process_individual_files: bool = True
+    process_individual_files: bool = True,
+    record_event: bool = True
 ) -> List[str]:
     """Convert files for a volume or issue.
 
@@ -171,5 +173,30 @@ def mass_convert(
 
     if process_individual_files:
         mass_process_files(volume_id)
+
+    if record_event:
+        record_activity(
+            ActivityCategory.FILE,
+            ActivityEventType.FILES_CONVERTED,
+            (
+                f'Converted {total_count} '
+                f'{"file" if total_count == 1 else "files"}'
+            ),
+            volume_id=volume_id,
+            issue_id=issue_id,
+            origin='user',
+            details={
+                'conversions': [
+                    {
+                        'from': conversion.filepath,
+                        'format': conversion.target_format
+                    }
+                    for conversion in planned_conversions[:50]
+                ],
+                'conversion_count': total_count,
+                'additional_count': max(0, total_count - 50),
+                'resulting_files': result[:50]
+            }
+        )
 
     return result

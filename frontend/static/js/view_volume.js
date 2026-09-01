@@ -38,10 +38,24 @@ const ViewEls = {
 		convert: document.querySelector('#convert-button'),
 		manage: document.querySelector('#manage-button'),
 		files: document.querySelector('#files-button'),
+		history: document.querySelector('#history-button'),
 		edit: document.querySelector('#edit-button'),
 		delete: document.querySelector('#delete-button')
 	},
+	history: {
+		table: document.querySelector('#volume-history'),
+		table_container: document.querySelector('#volume-history-table-container'),
+		status: document.querySelector('#volume-history-status'),
+		load_more: document.querySelector('#volume-history-load-more'),
+		issue: document.querySelector('#volume-history-issue'),
+		category: document.querySelector('#volume-history-category')
+	},
 	issues_list: document.querySelector('#issues-list')
+};
+
+const VolumeHistoryState = {
+	next_before_id: null,
+	loading: false
 };
 
 //
@@ -90,6 +104,7 @@ class IssueEntry {
 		.then(response => {
 			this.monitored.dataset.monitored = monitored;
 			this.setMonitorIcon();
+			refreshVolumeHistoryIfOpen(this.api_key);
 		});
 	};
 
@@ -216,6 +231,7 @@ function fillPage(data, api_key) {
 	// fill issue lists
 	fillTable(data.issues, api_key);
 	fillIssueMatchTable(data.issues);
+	fillVolumeHistoryIssues(data.issues);
 
 	mapButtons(volume_id);
 
@@ -239,7 +255,10 @@ function fillPage(data, api_key) {
         entry.querySelector('.gf-size').innerText = convertSize(gf.size);
         entry.querySelector('.gf-delete button').onclick = e =>
             sendAPI("DELETE", `/files/${gf.id}`, api_key)
-            .then(response => entry.remove());
+			.then(response => {
+				entry.remove();
+				refreshVolumeHistoryIfOpen(api_key);
+			});
 
         table.appendChild(entry);
 	});
@@ -267,7 +286,86 @@ function toggleMonitored(api_key) {
 				icons.unmonitored,
 				'Volume is unmonitored. Click to monitor.'
 			);
+		refreshVolumeHistoryIfOpen(api_key);
 	});
+};
+
+//
+// Activity history
+//
+function fillVolumeHistoryIssues(issues) {
+	ViewEls.history.issue.querySelectorAll('option:not(:first-child)')
+		.forEach(option => option.remove());
+	issues.forEach(issue => {
+		const option = document.createElement('option');
+		option.value = issue.id;
+		option.textContent = `#${issue.issue_number}${
+			issue.title ? ` - ${issue.title}` : ''
+		}`;
+		ViewEls.history.issue.appendChild(option);
+	});
+};
+
+function volumeHistoryParameters(append) {
+	const parameters = {
+		volume_id: volume_id,
+		limit: 25
+	};
+	if (append && VolumeHistoryState.next_before_id !== null)
+		parameters.before_id = VolumeHistoryState.next_before_id;
+	if (ViewEls.history.issue.value)
+		parameters.issue_id = ViewEls.history.issue.value;
+	if (ViewEls.history.category.value)
+		parameters.category = ViewEls.history.category.value;
+	return parameters;
+};
+
+function loadVolumeHistory(api_key, append=false) {
+	if (VolumeHistoryState.loading) return;
+	VolumeHistoryState.loading = true;
+	ViewEls.history.status.textContent = 'Loading activity...';
+	ViewEls.history.status.classList.remove('hidden');
+	ViewEls.history.load_more.disabled = true;
+
+	if (!append) {
+		VolumeHistoryState.next_before_id = null;
+		ViewEls.history.table.innerHTML = '';
+	};
+
+	fetchAPI('/activity/history', api_key, volumeHistoryParameters(append))
+	.then(json => {
+		ActivityHistoryUI.appendActivities(
+			ViewEls.history.table,
+			json.result.items
+		);
+		VolumeHistoryState.next_before_id = json.result.next_before_id;
+		const empty = ViewEls.history.table.children.length === 0;
+		ViewEls.history.status.textContent = empty ? 'No activity recorded' : '';
+		ViewEls.history.status.classList.toggle('hidden', !empty);
+		ViewEls.history.table_container.classList.toggle('hidden', empty);
+		ViewEls.history.load_more.classList.toggle(
+			'hidden',
+			!json.result.has_more
+		);
+	})
+	.catch(() => {
+		ViewEls.history.status.textContent = 'Could not load activity';
+		ViewEls.history.status.classList.remove('hidden');
+	})
+	.finally(() => {
+		VolumeHistoryState.loading = false;
+		ViewEls.history.load_more.disabled = false;
+	});
+};
+
+function showVolumeHistory(api_key) {
+	showWindow('history-window');
+	loadVolumeHistory(api_key);
+};
+
+function refreshVolumeHistoryIfOpen(api_key) {
+	if (document.querySelector('#history-window').hasAttribute('show-window'))
+		loadVolumeHistory(api_key);
 };
 
 //
@@ -920,7 +1018,10 @@ function showIssueInfo(issue_id, api_key) {
             entry.querySelector('.f-size').innerText = convertSize(f.size);
             entry.querySelector('.f-delete button').onclick = e =>
                 sendAPI("DELETE", `/files/${f.id}`, api_key)
-                .then(response => entry.remove());
+				.then(response => {
+					entry.remove();
+					refreshVolumeHistoryIfOpen(api_key);
+				});
 
             files_table.appendChild(entry);
 		});
@@ -957,7 +1058,11 @@ Promise.all([usingApiKey(), socketReady])
 	ViewEls.tool_bar.rename.onclick = e => showRename(api_key);
 	ViewEls.tool_bar.convert.onclick = e => showConvert(api_key);
 	ViewEls.tool_bar.manage.onclick = e => showManageIssues(api_key);
+	ViewEls.tool_bar.history.onclick = e => showVolumeHistory(api_key);
 	ViewEls.tool_bar.edit.onclick = e => showEdit(api_key);
+	ViewEls.history.issue.onchange = e => loadVolumeHistory(api_key);
+	ViewEls.history.category.onchange = e => loadVolumeHistory(api_key);
+	ViewEls.history.load_more.onclick = e => loadVolumeHistory(api_key, true);
 
 	document.querySelector('#submit-rename').onclick =
 	e => renameVolume(api_key, parseInt(e.target.dataset.issue_id) || null);

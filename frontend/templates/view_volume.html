@@ -3,10 +3,12 @@
 {% block title %}Volume{% endblock %}
 {% block css %}
 	<link rel="stylesheet" href="{{ url_for('static', filename='css/window.css') }}">
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/history.css') }}">
 	<link rel="stylesheet" href="{{ url_for('static', filename='css/view_volume.css') }}">
 {% endblock %}
 {% block js %}
 	<script src="{{ url_for('static', filename='js/window.js') }}" defer></script>
+	<script src="{{ url_for('static', filename='js/activity_history.js') }}" defer></script>
 	<script src="{{ url_for('static', filename='js/view_volume.js') }}" defer></script>
 {% endblock %}
 
@@ -344,6 +346,37 @@
 	{% endset %}
 	{{ window(False, "files-window", "General volume files", files_content) }}
 
+	{% set history_content %}
+		<div class="activity-filters">
+			<select id="volume-history-issue" aria-label="Issue filter">
+				<option value="">All issues</option>
+			</select>
+			<select id="volume-history-category" aria-label="Activity category">
+				<option value="">All activity</option>
+				<option value="volume">Series</option>
+				<option value="issue">Issues</option>
+				<option value="file">Files</option>
+				<option value="download">Downloads</option>
+			</select>
+		</div>
+		<p id="volume-history-status" class="activity-status">Loading activity...</p>
+		<div id="volume-history-table-container" class="activity-table-container hidden">
+			<table class="activity-table">
+				<thead>
+					<tr>
+						<th>Time</th>
+						<th>Type</th>
+						<th>Series / Issue</th>
+						<th>Change</th>
+					</tr>
+				</thead>
+				<tbody id="volume-history"></tbody>
+			</table>
+		</div>
+		<button id="volume-history-load-more" class="activity-load-more hidden" type="button">Load more</button>
+	{% endset %}
+	{{ window(True, "history-window", "History", history_content) }}
+
 {% endblock windows %}
 
 {% block main %}
@@ -395,6 +428,12 @@
 					"View the general files of the volume",
 					"files.svg",
 					"General Files"
+				) }}
+				{{ icon_button(
+					"history-button",
+					"View volume history",
+					"history.svg",
+					"History"
 				) }}
 				{{ icon_button(
 					"edit-button",

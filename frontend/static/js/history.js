@@ -1,76 +1,66 @@
 const HistoryEls = {
 	table: document.querySelector('#history'),
-	page_turner: {
-		container: document.querySelector('.page-turner'),
-		previous: document.querySelector('#previous-page'),
-		next: document.querySelector('#next-page'),
-		number: document.querySelector('#page-number')
-	},
+	table_container: document.querySelector('.activity-table-container'),
+	status: document.querySelector('#history-status'),
+	load_more: document.querySelector('#history-load-more'),
+	category: document.querySelector('#history-category'),
+	result: document.querySelector('#history-result'),
 	buttons: {
 		refresh: document.querySelector('#refresh-button'),
-		clear: document.querySelector('#clear-button')
-	},
-	entry: document.querySelector('.pre-build-els .history-entry')
+		clear: document.querySelector('#clear-button'),
+		confirm_clear: document.querySelector('#submit-clear-history')
+	}
 };
 
-var offset = 0;
+let nextBeforeId = null;
+let loading = false;
 
-function fillHistory(api_key) {
-	fetchAPI('/activity/history', api_key, {offset: offset})
-	.then(json => {
+function historyParameters(append) {
+	const parameters = {limit: 50};
+	if (append && nextBeforeId !== null) parameters.before_id = nextBeforeId;
+	if (HistoryEls.category.value) parameters.category = HistoryEls.category.value;
+	if (HistoryEls.result.value) parameters.success = HistoryEls.result.value;
+	return parameters;
+};
+
+function fillHistory(api_key, append=false) {
+	if (loading) return;
+	loading = true;
+	HistoryEls.status.textContent = 'Loading activity...';
+	HistoryEls.status.classList.remove('hidden');
+	HistoryEls.load_more.disabled = true;
+
+	if (!append) {
+		nextBeforeId = null;
 		HistoryEls.table.innerHTML = '';
-		json.result.forEach(obj => {
-			const entry = HistoryEls.entry.cloneNode(true);
+	};
 
-			const title = entry.querySelector('a');
-            title.href = obj.web_link;
-			title.innerText = obj.web_title;
-            title.title = obj.web_title;
-            if (obj.web_sub_title !== null)
-                title.title += `\n\n${obj.web_sub_title}`;
-
-            if (obj.file_title !== null) {
-                const vol_link = entry.querySelector('td:nth-child(2) a')
-                vol_link.innerText = obj.file_title;
-                if (obj.volume_id !== null)
-                    vol_link.href = `${url_base}/volumes/${obj.volume_id}`;
-            };
-
-            if (obj.source !== null)
-                entry.querySelector('td:nth-child(3)').innerText = obj.source;
-
-			let d = new Date(obj.downloaded_at * 1000);
-			let formatted_date = d.toLocaleString('en-CA').slice(0,10) + ' ' + d.toTimeString().slice(0,5);
-			entry.querySelector('td:nth-child(4)').innerText = formatted_date;
-			
-			if (obj.success !== null)
-				entry.querySelector('td:nth-child(5)').innerText =
-					obj.success ? 'Success' : 'Failed';
-
-			HistoryEls.table.appendChild(entry);
-		});
+	fetchAPI('/activity/history', api_key, historyParameters(append))
+	.then(json => {
+		ActivityHistoryUI.appendActivities(HistoryEls.table, json.result.items);
+		nextBeforeId = json.result.next_before_id;
+		const empty = HistoryEls.table.children.length === 0;
+		HistoryEls.status.textContent = empty ? 'No activity recorded' : '';
+		HistoryEls.status.classList.toggle('hidden', !empty);
+		HistoryEls.table_container.classList.toggle('hidden', empty);
+		HistoryEls.load_more.classList.toggle('hidden', !json.result.has_more);
+	})
+	.catch(() => {
+		HistoryEls.status.textContent = 'Could not load activity';
+		HistoryEls.status.classList.remove('hidden');
+	})
+	.finally(() => {
+		loading = false;
+		HistoryEls.load_more.disabled = false;
 	});
 };
 
 function clearHistory(api_key) {
 	sendAPI('DELETE', '/activity/history', api_key)
-	offset = 0;
-	HistoryEls.page_turner.number.innerText = 'Page 1';
-	HistoryEls.table.innerHTML = '';
-};
-
-function reduceOffset(api_key) {
-	if (offset === 0) return;
-	offset--;
-	HistoryEls.page_turner.number.innerText = `Page ${offset + 1}`;
-	fillHistory(api_key);
-};
-
-function increaseOffset(api_key) {
-	if (HistoryEls.table.innerHTML === '') return;
-	offset++;
-	HistoryEls.page_turner.number.innerText = `Page ${offset + 1}`;
-	fillHistory(api_key);
+	.then(() => {
+		closeWindow();
+		fillHistory(api_key);
+	});
 };
 
 // code run on load
@@ -78,7 +68,9 @@ usingApiKey()
 .then(api_key => {
 	fillHistory(api_key);
 	HistoryEls.buttons.refresh.onclick = e => fillHistory(api_key);
-	HistoryEls.buttons.clear.onclick = e => clearHistory(api_key);
-	HistoryEls.page_turner.previous.onclick = e => reduceOffset(api_key);
-	HistoryEls.page_turner.next.onclick = e => increaseOffset(api_key);
+	HistoryEls.buttons.clear.onclick = e => showWindow('clear-history-window');
+	HistoryEls.buttons.confirm_clear.onclick = e => clearHistory(api_key);
+	HistoryEls.load_more.onclick = e => fillHistory(api_key, true);
+	HistoryEls.category.onchange = e => fillHistory(api_key);
+	HistoryEls.result.onchange = e => fillHistory(api_key);
 });

@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from json import loads
 from unittest.mock import patch
 
 from backend.internals import db_migration
@@ -86,6 +87,72 @@ class DatabaseMigrationReconciliationTest(unittest.TestCase):
         }
         self.assertIn('release_discovery', tables)
         self.assertIn('pending_release_watches', tables)
+
+    def test_unifies_legacy_download_history(self):
+        self.connection.executescript("""
+            CREATE TABLE volumes (
+                id INTEGER PRIMARY KEY,
+                comicvine_id INTEGER,
+                title TEXT,
+                year INTEGER
+            );
+            CREATE TABLE issues (
+                id INTEGER PRIMARY KEY,
+                volume_id INTEGER,
+                comicvine_id INTEGER,
+                issue_number TEXT,
+                title TEXT
+            );
+            CREATE TABLE download_history (
+                web_link TEXT,
+                web_title TEXT,
+                web_sub_title TEXT,
+                file_title TEXT,
+                volume_id INTEGER,
+                issue_id INTEGER,
+                source TEXT,
+                downloaded_at INTEGER,
+                success BOOL
+            );
+
+            INSERT INTO volumes VALUES
+                (1, 101, 'Example Series', 2026);
+            INSERT INTO issues VALUES
+                (2, 1, 202, '1', 'First Issue');
+            INSERT INTO download_history VALUES
+                ('https://example.test/1', 'Example download', 'Issue 1',
+                 'Example 001.cbz', 1, 2, 'getcomics', 1000, 1),
+                ('https://example.test/2', 'Deleted download', NULL,
+                 'Deleted.cbz', NULL, NULL, 'getcomics', 1001, 0);
+        """)
+
+        with patch.object(
+            db_migration,
+            'get_db',
+            return_value=self.connection
+        ):
+            db_migration._migrate_unify_activity_history()
+            db_migration._migrate_unify_activity_history()
+
+        rows = self.connection.execute("""
+            SELECT * FROM activity_history ORDER BY id;
+        """).fetchall()
+        tables = {
+            row[0]
+            for row in self.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table';"
+            )
+        }
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0][2], 'download')
+        self.assertEqual(rows[0][3], 'download_succeeded')
+        self.assertEqual(rows[0][8], 101)
+        self.assertEqual(rows[0][10], 'Example Series')
+        self.assertEqual(loads(rows[0][17])['source'], 'getcomics')
+        self.assertEqual(rows[1][3], 'download_failed')
+        self.assertTrue(loads(rows[1][17])['legacy'])
+        self.assertNotIn('download_history', tables)
 
     def test_reconciles_upstream_version_45_schema(self):
         self._create_common_tables(forced=True)
@@ -213,6 +280,16 @@ class DatabaseMigrationReconciliationTest(unittest.TestCase):
         self.assertIn('metadata_source', self._columns('publisher_cache'))
         self.assertTrue(self._columns('release_cache_windows'))
         self.assertTrue(self._columns('metadata_response_cache'))
+        self.assertTrue(self._columns('activity_history'))
+        history_indexes = {
+            row[1]
+            for row in self.connection.execute(
+                'PRAGMA index_list(activity_history);'
+            )
+        }
+        self.assertIn('activity_history_created_at_index', history_indexes)
+        self.assertIn('activity_history_volume_index', history_indexes)
+        self.assertIn('activity_history_issue_index', history_indexes)
         indexes = {
             row[1]
             for row in self.connection.execute('PRAGMA index_list(volumes);')
