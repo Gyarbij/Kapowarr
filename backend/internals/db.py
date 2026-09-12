@@ -29,6 +29,7 @@ from backend.base.definitions import (
     SeedingHandling,
     SpecialVersion,
     T,
+    TaskSchedule,
 )
 from backend.base.files import create_folder, folder_path
 from backend.base.helpers import CommaList, current_thread_id
@@ -344,6 +345,7 @@ def setup_db_adapters_and_converters() -> None:
     register_adapter(SeedingHandling, lambda e: e.value)
     register_adapter(SpecialVersion, lambda e: e.value)
     register_adapter(DateType, lambda e: e.value)
+    register_adapter(TaskSchedule, lambda e: e.value)
     return
 
 
@@ -540,7 +542,10 @@ CREATE TABLE IF NOT EXISTS task_history(
 CREATE TABLE IF NOT EXISTS task_intervals(
     task_name PRIMARY KEY,
     interval INTEGER NOT NULL,
-    next_run INTEGER NOT NULL
+    next_run INTEGER NOT NULL,
+    schedule_type TEXT NOT NULL DEFAULT 'interval',
+    weekday INTEGER NOT NULL DEFAULT 0,
+    time_of_day TEXT NOT NULL DEFAULT '03:00'
 );
 CREATE TABLE IF NOT EXISTS blocklist(
     id INTEGER PRIMARY KEY,

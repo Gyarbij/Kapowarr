@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from dataclasses import _MISSING_TYPE, asdict, dataclass, field
+from datetime import datetime
 from functools import lru_cache
 
 try:
@@ -33,6 +34,7 @@ from backend.base.definitions import (
     OSType,
     ProxyType,
     SeedingHandling,
+    TaskSchedule,
 )
 from backend.base.files import (
     are_folders_colliding,
@@ -53,6 +55,11 @@ from backend.base.helpers import (
     test_proxy_url,
 )
 from backend.base.logging import LOGGER, set_log_level
+from backend.base.task_scheduling import (
+    ScheduleSpec,
+    next_schedule_run,
+    schedule_interval_seconds,
+)
 from backend.internals.db import DBConnection, commit, get_db
 from backend.internals.db_migration import DatabaseMigrationHandler
 
@@ -154,6 +161,18 @@ class PublicSettingsValues:
     search_all_interval: int = 24
     refresh_release_cache_interval: int = 1
     refresh_release_discovery_interval: int = 1
+    update_all_schedule: TaskSchedule = TaskSchedule.INTERVAL
+    search_all_schedule: TaskSchedule = TaskSchedule.INTERVAL
+    refresh_release_cache_schedule: TaskSchedule = TaskSchedule.INTERVAL
+    refresh_release_discovery_schedule: TaskSchedule = TaskSchedule.INTERVAL
+    update_all_weekday: int = 0
+    search_all_weekday: int = 0
+    refresh_release_cache_weekday: int = 0
+    refresh_release_discovery_weekday: int = 0
+    update_all_time: str = '03:00'
+    search_all_time: str = '03:00'
+    refresh_release_cache_time: str = '03:00'
+    refresh_release_discovery_time: str = '03:00'
     scheduled_update_skip_recent: bool = True
     refresh_skip_window: int = 24
     update_all_on_startup: bool = False
@@ -208,6 +227,16 @@ TASK_INTERVAL_SETTINGS = {
     'search_all': 'search_all_interval',
     'refresh_release_cache': 'refresh_release_cache_interval',
     'refresh_release_discovery': 'refresh_release_discovery_interval'
+}
+
+TASK_SCHEDULE_SETTINGS = {
+    task_name: {
+        'schedule': f'{task_name}_schedule',
+        'weekday': f'{task_name}_weekday',
+        'time': f'{task_name}_time',
+        'interval': interval_key
+    }
+    for task_name, interval_key in TASK_INTERVAL_SETTINGS.items()
 }
 
 
@@ -344,7 +373,12 @@ class Settings(metaclass=Singleton):
         if any(
             key in formatted_data
             and formatted_data[key] != getattr(old_settings, key)
-            for key in TASK_INTERVAL_SETTINGS.values()
+            for key in (
+                *TASK_INTERVAL_SETTINGS.values(),
+                *(values['schedule'] for values in TASK_SCHEDULE_SETTINGS.values()),
+                *(values['weekday'] for values in TASK_SCHEDULE_SETTINGS.values()),
+                *(values['time'] for values in TASK_SCHEDULE_SETTINGS.values())
+            )
         ):
             from backend.features.tasks import TaskHandler
             TaskHandler().reschedule_intervals()
@@ -536,6 +570,17 @@ class Settings(metaclass=Singleton):
         elif key in TASK_INTERVAL_SETTINGS.values() and value < 0:
             raise InvalidKeyValue(key, value)
 
+        elif key.endswith('_weekday') and not 0 <= value <= 6:
+            raise InvalidKeyValue(key, value)
+
+        elif key.endswith('_time'):
+            try:
+                datetime.strptime(value, '%H:%M')
+            except ValueError:
+                raise InvalidKeyValue(key, value)
+            if len(value) != 5:
+                raise InvalidKeyValue(key, value)
+
         elif key == 'refresh_skip_window' and value < 1:
             raise InvalidKeyValue(key, value)
 
@@ -704,11 +749,24 @@ class Settings(metaclass=Singleton):
 
 
 def get_task_intervals() -> Dict[str, int]:
-    """Get task intervals in seconds from the current settings."""
+    """Get effective task intervals in seconds from the current settings."""
+    return {
+        task_name: schedule_interval_seconds(schedule)
+        for task_name, schedule in get_task_schedules().items()
+    }
+
+
+def get_task_schedules() -> Dict[str, ScheduleSpec]:
+    """Get normalized recurrence specifications from current settings."""
     settings = Settings().sv
     return {
-        task_name: getattr(settings, setting_key) * 60 * 60
-        for task_name, setting_key in TASK_INTERVAL_SETTINGS.items()
+        task_name: ScheduleSpec(
+            schedule_type=getattr(settings, values['schedule']),
+            interval_seconds=getattr(settings, values['interval']) * 60 * 60,
+            weekday=getattr(settings, values['weekday']),
+            time_of_day=getattr(settings, values['time'])
+        )
+        for task_name, values in TASK_SCHEDULE_SETTINGS.items()
     }
 
 
@@ -719,46 +777,48 @@ def sync_task_intervals() -> None:
     existing = {
         row['task_name']: row
         for row in cursor.execute(
-            "SELECT task_name, interval, next_run FROM task_intervals;"
+            """
+            SELECT task_name, interval, next_run, schedule_type,
+                weekday, time_of_day
+            FROM task_intervals;
+            """
         )
     }
 
-    for task_name, interval in get_task_intervals().items():
+    schedules = get_task_schedules()
+    current_time = datetime.fromtimestamp(round(time())).astimezone()
+    for task_name, schedule in schedules.items():
+        interval = schedule_interval_seconds(schedule)
         task = existing.get(task_name)
+        schedule_type = schedule.schedule_type.value
         if task is None:
             cursor.execute(
-                "INSERT INTO task_intervals VALUES (?, ?, ?);",
-                (task_name, interval, current_time)
+                """
+                INSERT INTO task_intervals(
+                    task_name, interval, next_run, schedule_type,
+                    weekday, time_of_day
+                ) VALUES (?, ?, ?, ?, ?, ?);
+                """,
+                (task_name, interval, next_schedule_run(schedule, current_time),
+                 schedule_type, schedule.weekday, schedule.time_of_day)
             )
             continue
 
-        if interval == 0:
-            cursor.execute(
-                "UPDATE task_intervals SET interval = ? WHERE task_name = ?;",
-                (interval, task_name)
-            )
-        elif task['interval'] == 0:
-            cursor.execute(
-                """
-                UPDATE task_intervals
-                SET interval = ?, next_run = ?
-                WHERE task_name = ?;
-                """,
-                (interval, current_time + interval, task_name)
-            )
+        was_disabled = task['interval'] <= 0
+        if interval > 0 and was_disabled:
+            next_run = next_schedule_run(schedule, current_time)
         else:
-            cursor.execute(
-                """
-                UPDATE task_intervals
-                SET interval = ?, next_run = ?
-                WHERE task_name = ?;
-                """,
-                (
-                    interval,
-                    min(task['next_run'], current_time + interval),
-                    task_name
-                )
-            )
+            next_run = task['next_run']
+        cursor.execute(
+            """
+            UPDATE task_intervals
+            SET interval = ?, next_run = ?, schedule_type = ?,
+                weekday = ?, time_of_day = ?
+            WHERE task_name = ?;
+            """,
+            (interval, next_run, schedule_type, schedule.weekday,
+             schedule.time_of_day, task_name)
+        )
 
     commit()
     return

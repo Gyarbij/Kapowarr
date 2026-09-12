@@ -7,6 +7,7 @@ Background tasks and their handling
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from threading import RLock, Thread, Timer
 from time import sleep, time
 from typing import Dict, List, Tuple, Type, Union
@@ -18,9 +19,14 @@ from backend.base.custom_exceptions import (
     InvalidComicVineApiKey,
     TaskNotFound,
 )
-from backend.base.definitions import StartType
+from backend.base.definitions import StartType, TaskSchedule
 from backend.base.helpers import Singleton, get_subclasses
 from backend.base.logging import LOGGER
+from backend.base.task_scheduling import (
+    ScheduleSpec,
+    next_run_after_startup,
+    next_schedule_run,
+)
 from backend.features.download_queue import DownloadHandler
 from backend.features.search import (
     auto_search,
@@ -922,7 +928,11 @@ class TaskHandler(metaclass=Singleton):
 
             cursor = get_db()
             interval_tasks = cursor.execute(
-                "SELECT task_name, interval, next_run FROM task_intervals;"
+                """
+                SELECT task_name, interval, next_run, schedule_type,
+                    weekday, time_of_day
+                FROM task_intervals;
+                """
             ).fetchall()
             LOGGER.debug(f'Task intervals: {list(map(dict, interval_tasks))}')
             for task in interval_tasks:
@@ -939,10 +949,21 @@ class TaskHandler(metaclass=Singleton):
                     self.add(inst)
 
                     # Update next_run
-                    next_run = round(current_time + task['interval'])
+                    schedule_type = task['schedule_type'] if 'schedule_type' in task.keys() else TaskSchedule.INTERVAL.value
+                    schedule = ScheduleSpec(
+                        TaskSchedule(schedule_type),
+                        interval_seconds=task['interval'],
+                        weekday=task['weekday'] if 'weekday' in task.keys() else 0,
+                        time_of_day=task['time_of_day'] if 'time_of_day' in task.keys() else '03:00'
+                    )
+                    next_run = next_schedule_run(
+                        schedule,
+                        datetime.fromtimestamp(current_time).astimezone()
+                    )
                     cursor.execute(
                         "UPDATE task_intervals SET next_run = ? WHERE task_name = ?;",
                         (next_run, task['task_name']))
+            commit()
 
         self.handle_intervals()
         return
@@ -1028,13 +1049,39 @@ class TaskHandler(metaclass=Singleton):
             for task in tasks:
                 interval = task_intervals.get(task.action, 0)
                 if interval > 0:
+                    row = cursor.execute(
+                        """
+                        SELECT interval, schedule_type, weekday, time_of_day
+                        FROM task_intervals
+                        WHERE task_name = ?;
+                        """,
+                        (task.action,)
+                    ).fetchone()
+                    if (
+                        hasattr(row, 'keys')
+                        and isinstance(row['schedule_type'], str)
+                    ):
+                        schedule = ScheduleSpec(
+                            TaskSchedule(row['schedule_type']),
+                            interval_seconds=row['interval'],
+                            weekday=row['weekday'],
+                            time_of_day=row['time_of_day']
+                        )
+                    else:
+                        schedule = ScheduleSpec(
+                            TaskSchedule.INTERVAL,
+                            interval_seconds=interval
+                        )
                     cursor.execute(
                         """
                         UPDATE task_intervals
                         SET next_run = ?
                         WHERE task_name = ?;
                         """,
-                        (current_time + interval, task.action)
+                        (next_run_after_startup(
+                            schedule,
+                            datetime.fromtimestamp(current_time).astimezone()
+                        ), task.action)
                     )
             commit()
 
@@ -1226,7 +1273,10 @@ def get_task_planning() -> List[dict]:
     tasks = get_db().execute(
         """
         SELECT
-            i.task_name, interval, next_run, run_at AS last_run
+            i.task_name, i.schedule_type, i.weekday, i.time_of_day,
+            interval, CASE WHEN interval = 0 THEN NULL ELSE next_run END
+                AS next_run,
+            run_at AS last_run
         FROM task_intervals i
         LEFT JOIN (
             SELECT

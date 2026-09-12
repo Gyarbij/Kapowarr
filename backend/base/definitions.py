@@ -319,6 +319,15 @@ class StartType(BaseEnum):
     "A restart because changes to the hosting settings were made"
 
 
+class TaskSchedule(BaseEnum):
+    "The recurrence mode for a scheduled task"
+
+    INTERVAL = "interval"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    DISABLED = "disabled"
+
+
 class ProxyType(BaseEnum):
     NONE = None
     "Proxy disabled"

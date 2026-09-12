@@ -3,7 +3,9 @@ import unittest
 from unittest.mock import patch
 
 from backend.base.custom_exceptions import InvalidKeyValue
+from backend.base.definitions import TaskSchedule
 from backend.base.helpers import Singleton
+from backend.base.task_scheduling import ScheduleSpec
 from backend.internals.db import DB_SCHEMA, setup_db_adapters_and_converters
 from backend.internals.settings import Settings, sync_task_intervals
 
@@ -43,15 +45,18 @@ class SettingsTest(unittest.TestCase):
         self.connection.close()
 
     def test_sync_inserts_configured_intervals(self):
-        intervals = {
-            'update_all': 3600,
-            'search_all': 86_400,
-            'refresh_release_cache': 3600,
-            'refresh_release_discovery': 3600
+        schedules = {
+            task: ScheduleSpec(TaskSchedule.INTERVAL, interval)
+            for task, interval in {
+                'update_all': 3600,
+                'search_all': 86_400,
+                'refresh_release_cache': 3600,
+                'refresh_release_discovery': 3600
+            }.items()
         }
         with patch(
-            'backend.internals.settings.get_task_intervals',
-            return_value=intervals
+            'backend.internals.settings.get_task_schedules',
+            return_value=schedules
         ), patch('backend.internals.settings.time', return_value=1000):
             sync_task_intervals()
 
@@ -62,28 +67,28 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(
             [tuple(row) for row in rows],
             [
-                ('refresh_release_cache', 3600, 1000),
-                ('refresh_release_discovery', 3600, 1000),
-                ('search_all', 86_400, 1000),
-                ('update_all', 3600, 1000)
+                ('refresh_release_cache', 3600, 4600),
+                ('refresh_release_discovery', 3600, 4600),
+                ('search_all', 86_400, 87400),
+                ('update_all', 3600, 4600)
             ]
         )
 
     def test_sync_preserves_due_time_and_disables_without_rescheduling(self):
         self.cursor.executemany(
-            'INSERT INTO task_intervals VALUES (?, ?, ?);',
+            'INSERT INTO task_intervals(task_name, interval, next_run) VALUES (?, ?, ?);',
             (
                 ('update_all', 3600, 900),
                 ('search_all', 0, 777)
             )
         )
-        intervals = {
-            'update_all': 7200,
-            'search_all': 0
+        schedules = {
+            'update_all': ScheduleSpec(TaskSchedule.INTERVAL, 7200),
+            'search_all': ScheduleSpec(TaskSchedule.DISABLED)
         }
         with patch(
-            'backend.internals.settings.get_task_intervals',
-            return_value=intervals
+            'backend.internals.settings.get_task_schedules',
+            return_value=schedules
         ), patch('backend.internals.settings.time', return_value=1000):
             sync_task_intervals()
 
@@ -98,12 +103,12 @@ class SettingsTest(unittest.TestCase):
 
     def test_sync_reenables_task_from_now(self):
         self.cursor.execute(
-            'INSERT INTO task_intervals VALUES (?, ?, ?);',
+            'INSERT INTO task_intervals(task_name, interval, next_run) VALUES (?, ?, ?);',
             ('update_all', 0, 100)
         )
         with patch(
-            'backend.internals.settings.get_task_intervals',
-            return_value={'update_all': 3600}
+            'backend.internals.settings.get_task_schedules',
+            return_value={'update_all': ScheduleSpec(TaskSchedule.INTERVAL, 3600)}
         ), patch('backend.internals.settings.time', return_value=1000):
             sync_task_intervals()
 
@@ -125,6 +130,9 @@ class SettingsTest(unittest.TestCase):
 
         invalid_values = (
             ('update_all_interval', -1),
+            ('update_all_schedule', 'monthly'),
+            ('update_all_weekday', 7),
+            ('update_all_time', '24:00'),
             ('refresh_skip_window', 0),
             ('startup_task_delay', -1)
         )

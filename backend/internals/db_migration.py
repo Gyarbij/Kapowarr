@@ -1468,3 +1468,24 @@ def _migrate_unify_activity_history():
         DROP TABLE download_history;
     """)
     return
+
+
+@DatabaseMigrationHandler.register_handler(50)
+def _migrate_add_task_schedule_columns():
+    """Persist calendar recurrence metadata for scheduled tasks."""
+    cursor = get_db()
+    columns = {
+        column[1]
+        for column in cursor.execute("PRAGMA table_info(task_intervals);")
+    }
+    additions = (
+        ("schedule_type", "TEXT NOT NULL DEFAULT 'interval'"),
+        ("weekday", "INTEGER NOT NULL DEFAULT 0"),
+        ("time_of_day", "TEXT NOT NULL DEFAULT '03:00'"),
+    )
+    for name, definition in additions:
+        if name not in columns:
+            cursor.execute(
+                f"ALTER TABLE task_intervals ADD COLUMN {name} {definition};"
+            )
+    return

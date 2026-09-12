@@ -50,33 +50,58 @@
 			</table>
 
 			<h2>Scheduled Tasks</h2>
-			<p>Set an interval in hours. Set an interval to 0 to disable its schedule. Disabled tasks can still be run from the <a href="{{url_base}}/system/tasks">Tasks</a> page.</p>
+			<p>Times use the server or container local timezone. Disabled tasks can still be run from the <a href="{{url_base}}/system/tasks">Tasks</a> page.</p>
 			<table class="fold-table">
 				<tr>
-					<th><label for="update-all-interval-input">Update All Interval</label></th>
+					<th><label for="update-all-schedule-input">Update All</label></th>
 					<td>
+						<select id="update-all-schedule-input" data-task="update_all">
+							<option value="disabled">Disabled</option>
+							<option value="interval">Every N hours</option>
+							<option value="daily">Daily</option>
+							<option value="weekly">Weekly</option>
+						</select>
 						<input type="number" id="update-all-interval-input" min="0" step="1" required>
+						<select id="update-all-weekday-input">
+							<option value="0">Monday</option><option value="1">Tuesday</option>
+							<option value="2">Wednesday</option><option value="3">Thursday</option>
+							<option value="4">Friday</option><option value="5">Saturday</option>
+							<option value="6">Sunday</option>
+						</select>
+						<input type="time" id="update-all-time-input" required>
 						<p>How often to refresh metadata and scan the library.</p>
 					</td>
 				</tr>
 				<tr>
-					<th><label for="search-all-interval-input">Search Missing Interval</label></th>
+					<th><label for="search-all-schedule-input">Search Missing</label></th>
 					<td>
+						<select id="search-all-schedule-input" data-task="search_all">
+							<option value="disabled">Disabled</option><option value="interval">Every N hours</option>
+							<option value="daily">Daily</option><option value="weekly">Weekly</option>
+						</select>
 						<input type="number" id="search-all-interval-input" min="0" step="1" required>
+						<select id="search-all-weekday-input"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select>
+						<input type="time" id="search-all-time-input" required>
 						<p>How often to search monitored volumes for missing issues.</p>
 					</td>
 				</tr>
 				<tr>
-					<th><label for="refresh-release-cache-interval-input">Refresh Releases Interval</label></th>
+					<th><label for="refresh-release-cache-schedule-input">Refresh Releases</label></th>
 					<td>
+						<select id="refresh-release-cache-schedule-input" data-task="refresh_release_cache"><option value="disabled">Disabled</option><option value="interval">Every N hours</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
 						<input type="number" id="refresh-release-cache-interval-input" min="0" step="1" required>
+						<select id="refresh-release-cache-weekday-input"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select>
+						<input type="time" id="refresh-release-cache-time-input" required>
 						<p>How often to refresh the release cache and publishers.</p>
 					</td>
 				</tr>
 				<tr>
-					<th><label for="refresh-release-discovery-interval-input">Release Discovery Interval</label></th>
+					<th><label for="refresh-release-discovery-schedule-input">Release Discovery</label></th>
 					<td>
+						<select id="refresh-release-discovery-schedule-input" data-task="refresh_release_discovery"><option value="disabled">Disabled</option><option value="interval">Every N hours</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select>
 						<input type="number" id="refresh-release-discovery-interval-input" min="0" step="1" required>
+						<select id="refresh-release-discovery-weekday-input"><option value="0">Monday</option><option value="1">Tuesday</option><option value="2">Wednesday</option><option value="3">Thursday</option><option value="4">Friday</option><option value="5">Saturday</option><option value="6">Sunday</option></select>
+						<input type="time" id="refresh-release-discovery-time-input" required>
 						<p>How often to check supplemental release sources.</p>
 					</td>
 				</tr>
