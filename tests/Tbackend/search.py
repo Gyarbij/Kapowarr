@@ -121,6 +121,52 @@ class ManualSearchTest(unittest.TestCase):
             'year_mismatch'
         )
 
+    @patch('backend.features.search.Volume')
+    @patch(
+        'backend.implementations.matching.blocklist_contains',
+        return_value=None
+    )
+    @patch(
+        'backend.features.search.search_multiple_queries',
+        new_callable=AsyncMock,
+        return_value=[]
+    )
+    def test_persisted_release_link_is_retained(
+        self, search_queries, _blocklist, volume_class
+    ):
+        volume_class.return_value.get_data.return_value = SimpleNamespace(
+            title='Canonical Title',
+            alt_title=None,
+            publisher=None,
+            year=2020,
+            volume_number=1,
+            special_version=SpecialVersion.NORMAL
+        )
+        volume_class.return_value.get_issues.return_value = []
+        volume_class.return_value.get_search_match.return_value = {
+            'volume_id': 1,
+            'source': 'getcomics',
+            'source_id': 'https://getcomics.org/selected/',
+            'title': 'Search Identity',
+            'aliases': [],
+            'year': 2020,
+            'volume_number': 1,
+            'comicvine_id': None,
+            'release_link': 'https://getcomics.org/selected/',
+            'display_title': 'Selected Release',
+            'matched_at': 1
+        }
+
+        results = manual_search(1)
+
+        self.assertTrue(any(
+            query.startswith('Search Identity')
+            for query in search_queries.await_args.args
+        ))
+        self.assertEqual(
+            results[0]['link'], 'https://getcomics.org/selected/'
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

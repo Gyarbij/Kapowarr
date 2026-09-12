@@ -213,6 +213,14 @@ tbody .issue-title:hover {
 	text-align: center;
 }
 
+#series-match-window .window-content {
+	overflow-x: auto;
+}
+
+#series-match-table {
+	min-width: 680px;
+}
+
 #search-result-table {
 	min-width: 680px;
 }

@@ -754,6 +754,32 @@ class VolumeMetadata(TypedDict):
     issues: Union[List[IssueMetadata], None]
 
 
+class VolumeSearchMatch(TypedDict):
+    volume_id: int
+    source: str
+    source_id: Union[str, None]
+    title: str
+    aliases: List[str]
+    year: Union[int, None]
+    volume_number: Union[int, None]
+    comicvine_id: Union[int, None]
+    release_link: Union[str, None]
+    display_title: str
+    matched_at: int
+
+
+class VolumeSearchCandidate(TypedDict):
+    source: str
+    source_id: Union[str, None]
+    title: str
+    aliases: List[str]
+    year: Union[int, None]
+    volume_number: Union[int, None]
+    comicvine_id: Union[int, None]
+    release_link: Union[str, None]
+    display_title: str
+
+
 class PublisherMetadata(TypedDict):
     comicvine_id: int
     name: str

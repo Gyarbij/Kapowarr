@@ -6,6 +6,7 @@ from backend.base.definitions import (
     SearchResultData,
     SpecialVersion,
     VolumeData,
+    VolumeSearchMatch,
 )
 from backend.implementations.matching import (
     check_search_result_match,
@@ -85,6 +86,33 @@ class SearchResultMatchingTest(unittest.TestCase):
         self.assertIsNone(match['match_issue'])
         self.assertIsNone(match['match_reason_code'])
         self.assertEqual(match['matched_issue_ids'], [3])
+
+    @patch(
+        'backend.implementations.matching.blocklist_contains',
+        return_value=None
+    )
+    def test_search_match_alias_allows_override_identity(self, _blocklist):
+        search_match: VolumeSearchMatch = {
+            'volume_id': 1,
+            'source': 'comicvine',
+            'source_id': '4050-1',
+            'title': 'Lobo Archive',
+            'aliases': ['Lobo'],
+            'year': 2025,
+            'volume_number': 1,
+            'comicvine_id': 4050,
+            'release_link': 'https://comicvine.gamespot.com/lobo/',
+            'display_title': 'Lobo Archive',
+            'matched_at': 1
+        }
+        match = check_search_result_match(
+            self._result(series='Lobo Archive'),
+            self.volume,
+            self.issues,
+            self.number_to_year,
+            search_match=search_match
+        )
+        self.assertTrue(match['match'])
 
     @patch(
         'backend.implementations.matching.blocklist_contains',

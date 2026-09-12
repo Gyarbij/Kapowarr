@@ -12,6 +12,7 @@ from backend.base.definitions import (
     SearchResultData,
     SearchSource,
     SpecialVersion,
+    VolumeSearchCandidate,
 )
 from backend.base.file_extraction import refine_special_version
 from backend.base.helpers import (
@@ -23,6 +24,7 @@ from backend.base.helpers import (
     normalise_query_string,
 )
 from backend.base.logging import LOGGER
+from backend.implementations.comicvine import ComicVine
 from backend.implementations.getcomics import search_getcomics
 from backend.implementations.matching import check_search_result_match
 from backend.implementations.volumes import Volume
@@ -238,6 +240,56 @@ class SearchGetComics(SearchSource):
         return await search_getcomics(session, self.query)
 
 
+async def search_series_candidates(
+    query: str,
+    source: str = 'all'
+) -> List[VolumeSearchCandidate]:
+    """Search ComicVine and/or GetComics for series identity candidates."""
+    candidates: List[VolumeSearchCandidate] = []
+
+    if source in ('all', 'comicvine'):
+        for result in await ComicVine().search_volumes(
+            query,
+            allow_rate_limit_reached=True
+        ):
+            candidates.append({
+                'source': 'comicvine',
+                'source_id': str(result['comicvine_id']),
+                'title': result['title'],
+                'aliases': list(result.get('aliases') or []),
+                'year': result['year'],
+                'volume_number': result['volume_number'],
+                'comicvine_id': result['comicvine_id'],
+                'release_link': result['site_url'] or None,
+                'display_title': result['title']
+            })
+
+    if source in ('all', 'getcomics'):
+        async with AsyncSession() as session:
+            for result in await search_getcomics(session, query):
+                candidates.append({
+                    'source': 'getcomics',
+                    'source_id': result['link'],
+                    'title': result['series'],
+                    'aliases': [],
+                    'year': result['year'],
+                    'volume_number': result['volume_number'],
+                    'comicvine_id': None,
+                    'release_link': result['link'],
+                    'display_title': result['display_title']
+                })
+
+    seen = set()
+    unique_candidates = []
+    for candidate in candidates:
+        key = (candidate['source'], candidate['source_id'])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_candidates.append(candidate)
+    return unique_candidates
+
+
 async def search_multiple_queries(*queries: str) -> List[SearchResultData]:
     """Do a manual search for multiple queries asynchronously.
 
@@ -292,6 +344,9 @@ def manual_search(
     """
     volume = Volume(volume_id)
     volume_data = volume.get_data()
+    search_match = volume.get_search_match()
+    if not isinstance(search_match, dict):
+        search_match = None
     volume_issues = volume.get_issues()
     number_to_year: Dict[float, Union[int, None]] = {
         i.calculated_issue_number: extract_year_from_date(i.date)
@@ -333,7 +388,13 @@ def manual_search(
         )
 
     queries = []
-    for title in (volume_data.title, volume_data.alt_title):
+    identity_titles = []
+    if search_match:
+        identity_titles.extend(
+            [search_match['title'], *search_match['aliases']]
+        )
+    identity_titles.extend((volume_data.title, volume_data.alt_title))
+    for title in identity_titles:
         if not title:
             continue
         for search_title in _manual_search_title_variants(
@@ -350,12 +411,32 @@ def manual_search(
             )
 
     search_results = run(search_multiple_queries(*dict.fromkeys(queries)))
+    if (
+        search_match
+        and search_match['source'] == 'getcomics'
+        and search_match['release_link']
+    ):
+        if not any(
+            result['link'] == search_match['release_link']
+            for result in search_results
+        ):
+            search_results.append({
+                'series': search_match['title'],
+                'year': search_match['year'],
+                'volume_number': search_match['volume_number'],
+                'special_version': None,
+                'issue_number': None,
+                'annual': False,
+                'link': search_match['release_link'],
+                'display_title': search_match['display_title'],
+                'source': search_match['source'].title()
+            })
     results: List[MatchedSearchResultData] = [
         {
             **result,
             **check_search_result_match(
                 result, volume_data, volume_issues,
-                number_to_year, calculated_issue_number
+                number_to_year, calculated_issue_number, search_match
             )
         }
         for result in search_results

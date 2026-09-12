@@ -1489,3 +1489,27 @@ def _migrate_add_task_schedule_columns():
                 f"ALTER TABLE task_intervals ADD COLUMN {name} {definition};"
             )
     return
+
+
+@DatabaseMigrationHandler.register_handler(51)
+def _migrate_add_volume_search_matches():
+    """Persist one reversible search identity override per volume."""
+    get_db().execute("""
+        CREATE TABLE IF NOT EXISTS volume_search_matches(
+            volume_id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL CHECK (source IN ('comicvine', 'getcomics')),
+            source_id TEXT,
+            title TEXT NOT NULL,
+            aliases TEXT NOT NULL DEFAULT '[]',
+            year INTEGER,
+            volume_number INTEGER,
+            comicvine_id INTEGER,
+            release_link TEXT,
+            display_title TEXT NOT NULL,
+            matched_at INTEGER NOT NULL,
+
+            FOREIGN KEY (volume_id) REFERENCES volumes(id)
+                ON DELETE CASCADE
+        );
+    """)
+    return

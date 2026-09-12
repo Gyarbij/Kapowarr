@@ -34,6 +34,7 @@ const ViewEls = {
 		refresh: document.querySelector('#refresh-button'),
 		auto_search: document.querySelector('#autosearch-button'),
 		manual_search: document.querySelector('#manualsearch-button'),
+		series_match: document.querySelector('#seriesmatch-button'),
 		rename: document.querySelector('#rename-button'),
 		convert: document.querySelector('#convert-button'),
 		manage: document.querySelector('#manage-button'),
@@ -165,6 +166,7 @@ function fillTable(issues, api_key) {
 };
 
 function fillPage(data, api_key) {
+	window.series_match = data.series_match;
 	if (data.special_version_locked)
 		ViewEls.vol_edit.special_version.value = data.special_version || '';
 	else {
@@ -486,6 +488,71 @@ function showManualSearch(api_key, issue_id=null) {
 
 		hide([message], [table]);
 	});
+};
+
+function showSeriesMatch(api_key, current_match=null) {
+	const query = document.querySelector('#series-match-query');
+	const active = document.querySelector('#series-match-active');
+	const clear = document.querySelector('#series-match-clear');
+	const form = document.querySelector('#series-match-form');
+	const searching = document.querySelector('#series-match-searching');
+	const table = document.querySelector('#series-match-table');
+	const tbody = table.querySelector('tbody');
+	query.value = current_match?.title || ViewEls.vol_data.title.innerText;
+	if (current_match) {
+		active.innerText = `Active match: ${current_match.display_title}`;
+		clear.classList.remove('hidden');
+	} else {
+		active.innerText = '';
+		clear.classList.add('hidden');
+	}
+	tbody.innerHTML = '';
+	showWindow('series-match-window');
+	form.onsubmit = e => {
+		e.preventDefault();
+		hide([], [searching]);
+		fetchAPI(`/volumes/${volume_id}/seriesmatch/search`, api_key, {
+			query: encodeURIComponent(query.value),
+			source: document.querySelector('#series-match-source').value
+		})
+		.then(json => {
+			tbody.innerHTML = '';
+			json.result.forEach(candidate => {
+				const row = document.createElement('tr');
+				const values = [candidate.source, candidate.title,
+					candidate.year ?? '', candidate.volume_number ?? ''];
+				values.forEach(value => {
+					const cell = document.createElement('td');
+					cell.innerText = value;
+					row.appendChild(cell);
+				});
+				const link_cell = document.createElement('td');
+				if (candidate.release_link) {
+					const link = document.createElement('a');
+					link.href = candidate.release_link;
+					link.innerText = 'Open';
+					link.target = '_blank';
+					link_cell.appendChild(link);
+				}
+				row.appendChild(link_cell);
+				const action = document.createElement('td');
+				const button = document.createElement('button');
+				button.type = 'button';
+				button.innerText = 'Select';
+				button.onclick = () => sendAPI(
+					'POST', `/volumes/${volume_id}/seriesmatch`, api_key, {}, candidate
+				).then(() => window.location.reload());
+				action.appendChild(button);
+				row.appendChild(action);
+				tbody.appendChild(row);
+			});
+			hide([searching]);
+		})
+		.catch(() => hide([searching]));
+	};
+	clear.onclick = () => sendAPI(
+		'DELETE', `/volumes/${volume_id}/seriesmatch`, api_key
+	).then(() => window.location.reload());
 };
 
 function addManualSearch(link, force, button, api_key, issue_id=null) {
@@ -1067,6 +1134,7 @@ Promise.all([usingApiKey(), socketReady])
 	ViewEls.tool_bar.refresh.onclick = e => refreshVolume(api_key);
 	ViewEls.tool_bar.auto_search.onclick = e => autosearchVolume(api_key);
 	ViewEls.tool_bar.manual_search.onclick = e => showManualSearch(api_key);
+	ViewEls.tool_bar.series_match.onclick = e => showSeriesMatch(api_key, window.series_match);
 	ViewEls.tool_bar.rename.onclick = e => showRename(api_key);
 	ViewEls.tool_bar.convert.onclick = e => showConvert(api_key);
 	ViewEls.tool_bar.manage.onclick = e => showManageIssues(api_key);

@@ -4,6 +4,7 @@ from asyncio import run
 from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Any, Dict, List, Tuple, Type, Union
+from urllib.parse import urlparse
 
 from flask import Blueprint, request, send_file
 
@@ -36,7 +37,7 @@ from backend.features.activity_history import (
 from backend.features.download_queue import DownloadHandler
 from backend.features.library_import import import_library, propose_library_import
 from backend.features.mass_edit import run_mass_editor_action
-from backend.features.search import manual_search
+from backend.features.search import manual_search, search_series_candidates
 from backend.features.tasks import (
     Task,
     TaskHandler,
@@ -1651,6 +1652,73 @@ def api_convert_issue(id: int):
 # =====================
 # Manual search + Download
 # =====================
+
+
+@api.route('/volumes/<int:id>/seriesmatch/search', methods=['GET'])
+@error_handler
+@auth
+def api_volume_series_match_search(id: int):
+    Library.get_volume(id)
+    query = request.values.get('query', '').strip()
+    source = request.values.get('source', 'all')
+    if not query or len(query) > 255:
+        raise InvalidKeyValue('query', query)
+    if source not in ('all', 'comicvine', 'getcomics'):
+        raise InvalidKeyValue('source', source)
+    return return_api(run(search_series_candidates(query, source)))
+
+
+@api.route('/volumes/<int:id>/seriesmatch', methods=['POST', 'DELETE'])
+@error_handler
+@auth
+def api_volume_series_match(id: int):
+    volume = Library.get_volume(id)
+    if request.method == 'DELETE':
+        volume.clear_search_match()
+        return return_api(None)
+
+    data = request.get_json(silent=True) or {}
+    source = data.get('source')
+    title = data.get('title')
+    if source not in ('comicvine', 'getcomics'):
+        raise InvalidKeyValue('source', source)
+    if not isinstance(title, str) or not title.strip() or len(title) > 255:
+        raise InvalidKeyValue('title', title)
+    aliases = data.get('aliases', [])
+    if not isinstance(aliases, list) or not all(
+        isinstance(alias, str) for alias in aliases
+    ):
+        raise InvalidKeyValue('aliases', aliases)
+    for key in ('year', 'volume_number', 'comicvine_id'):
+        if data.get(key) is not None and not isinstance(data[key], int):
+            raise InvalidKeyValue(key, data[key])
+    source_id = data.get('source_id')
+    if source_id is not None and not isinstance(source_id, str):
+        raise InvalidKeyValue('source_id', source_id)
+    display_title = data.get('display_title')
+    if display_title is not None and (
+        not isinstance(display_title, str) or not display_title.strip()
+    ):
+        raise InvalidKeyValue('display_title', display_title)
+    release_link = data.get('release_link')
+    if release_link is not None:
+        if not isinstance(release_link, str):
+            raise InvalidKeyValue('release_link', release_link)
+        parsed = urlparse(release_link)
+        allowed_hosts = {
+            'comicvine.gamespot.com', 'getcomics.org', 'www.getcomics.org'
+        }
+        if (
+            parsed.scheme != 'https'
+            or parsed.hostname not in allowed_hosts
+        ):
+            raise InvalidKeyValue('release_link', release_link)
+    match = volume.set_search_match({
+        **data,
+        'title': title.strip(),
+        'display_title': data.get('display_title') or title.strip()
+    })
+    return return_api(match)
 
 
 @api.route('/volumes/<int:id>/manualsearch', methods=['GET'])

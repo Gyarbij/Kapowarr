@@ -6,6 +6,7 @@ Library, volume and issue classes and Refresh & Scan
 
 from __future__ import annotations
 
+import json
 from asyncio import run
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -13,7 +14,7 @@ from io import BytesIO
 from os.path import basename, dirname, exists, isdir, relpath
 from re import IGNORECASE, compile
 from time import time
-from typing import Any, Callable, Dict, List, Mapping, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Set, Tuple, Union, cast
 
 from typing_extensions import assert_never
 
@@ -41,6 +42,7 @@ from backend.base.definitions import (
     MonitorScheme,
     SpecialVersion,
     VolumeData,
+    VolumeSearchMatch,
 )
 from backend.base.files import (
     change_basefolder,
@@ -418,8 +420,76 @@ class Volume:
 
         volume_info['issues'] = [i.todict() for i in self.get_issues()]
         volume_info['general_files'] = self.get_general_files()
+        volume_info['series_match'] = self.get_search_match()
 
         return volume_info
+
+    def get_search_match(self) -> Union[VolumeSearchMatch, None]:
+        row = get_db().execute(
+            """
+            SELECT volume_id, source, source_id, title, aliases, year,
+                volume_number, comicvine_id, release_link, display_title,
+                matched_at
+            FROM volume_search_matches
+            WHERE volume_id = ?
+            LIMIT 1;
+            """,
+            (self.id,)
+        ).fetchonedict()
+        if row is None:
+            return None
+        row['aliases'] = json.loads(row['aliases'])
+        return cast(VolumeSearchMatch, row)
+
+    def set_search_match(self, match: Mapping[str, Any]) -> VolumeSearchMatch:
+        stored: VolumeSearchMatch = {
+            'volume_id': self.id,
+            'source': match['source'],
+            'source_id': match.get('source_id'),
+            'title': match['title'],
+            'aliases': list(match.get('aliases') or []),
+            'year': match.get('year'),
+            'volume_number': match.get('volume_number'),
+            'comicvine_id': match.get('comicvine_id'),
+            'release_link': match.get('release_link'),
+            'display_title': match.get('display_title') or match['title'],
+            'matched_at': int(match.get('matched_at') or time())
+        }
+        get_db().execute(
+            """
+            INSERT INTO volume_search_matches(
+                volume_id, source, source_id, title, aliases, year,
+                volume_number, comicvine_id, release_link, display_title,
+                matched_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(volume_id) DO UPDATE SET
+                source = excluded.source,
+                source_id = excluded.source_id,
+                title = excluded.title,
+                aliases = excluded.aliases,
+                year = excluded.year,
+                volume_number = excluded.volume_number,
+                comicvine_id = excluded.comicvine_id,
+                release_link = excluded.release_link,
+                display_title = excluded.display_title,
+                matched_at = excluded.matched_at;
+            """,
+            (
+                stored['volume_id'], stored['source'], stored['source_id'],
+                stored['title'], json.dumps(stored['aliases']), stored['year'],
+                stored['volume_number'], stored['comicvine_id'],
+                stored['release_link'], stored['display_title'],
+                stored['matched_at']
+            )
+        )
+        return stored
+
+    def clear_search_match(self) -> None:
+        get_db().execute(
+            "DELETE FROM volume_search_matches WHERE volume_id = ?;",
+            (self.id,)
+        )
+        return
 
     # Alias, better in one-liners
     # vd = Volume Data
