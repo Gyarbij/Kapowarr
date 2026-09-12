@@ -7,9 +7,9 @@ issues and volumes.
 
 from __future__ import annotations
 
+import re
 from itertools import chain
 from math import floor
-from re import compile
 from typing import TYPE_CHECKING, Dict, List, Mapping, Tuple, Union
 
 from backend.base.definitions import (
@@ -30,9 +30,18 @@ if TYPE_CHECKING:
         VolumeData,
     )
 
-clean_title_regex = compile(
+clean_title_regex = re.compile(
     r'((?<=annual)s|/|\-|–|\+|,|\.|\!|:|\bthe\s|\band\b|&|’|\'|\"|\bone[\-\s]?shot\b|\bhard[\-\s]?cover\b|\bomnibus\b|\btpb\b)'
 )
+possessive_title_regex = re.compile(r"['’]s\b")
+generic_title_descriptor_regex = re.compile(r'\b(comics?|magazines?)\b')
+
+
+def _clean_match_title(title: str) -> str:
+    title = normalise_query_string(title).lower()
+    title = possessive_title_regex.sub('', title)
+    title = generic_title_descriptor_regex.sub('', title)
+    return clean_title_regex.sub('', title).replace(' ', '')
 
 
 def match_title(
@@ -52,15 +61,8 @@ def match_title(
     Returns:
         bool: Whether the titles match.
     """
-    clean_reference_title = clean_title_regex.sub(
-        '',
-        normalise_query_string(title1).lower()
-    ).replace(' ', '')
-
-    clean_title = clean_title_regex.sub(
-        '',
-        normalise_query_string(title2).lower()
-    ).replace(' ', '')
+    clean_reference_title = _clean_match_title(title1)
+    clean_title = _clean_match_title(title2)
 
     if allow_contains:
         return clean_title in clean_reference_title

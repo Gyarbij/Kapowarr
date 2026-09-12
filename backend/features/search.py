@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import re
 from asyncio import gather, run
 from collections import Counter
 from typing import Dict, List, Tuple, Union
@@ -25,6 +26,43 @@ from backend.base.logging import LOGGER
 from backend.implementations.getcomics import search_getcomics
 from backend.implementations.matching import check_search_result_match
 from backend.implementations.volumes import Volume
+
+possessive_query_regex = re.compile(r"\b([\w]+)['’]s\b", re.IGNORECASE)
+generic_query_descriptor_regex = re.compile(
+    r'\b(comics?|magazines?)\b', re.IGNORECASE
+)
+
+
+def _manual_search_title_variants(
+    title: str,
+    publisher: Union[str, None]
+) -> List[str]:
+    """Return conservative query variants for publication title differences."""
+    search_title = normalise_query_string(title).replace(':', '').strip()
+    variants = [search_title]
+
+    possessive_match = possessive_query_regex.match(search_title)
+    simplified_title = possessive_query_regex.sub(
+        r'\1', search_title, count=1
+    )
+    simplified_title = generic_query_descriptor_regex.sub(
+        '', simplified_title
+    )
+    simplified_title = ' '.join(simplified_title.split())
+    variants.append(simplified_title)
+
+    if possessive_match and publisher:
+        publisher_title = normalise_query_string(publisher).strip()
+        brand = possessive_match.group(1)
+        if publisher_title.lower().startswith(brand.lower()):
+            remainder = search_title[possessive_match.end():].strip()
+            remainder = generic_query_descriptor_regex.sub('', remainder)
+            remainder = ' '.join(remainder.split())
+            variants.append(
+                ' '.join(part for part in (publisher_title, remainder) if part)
+            )
+
+    return list(dict.fromkeys(variant for variant in variants if variant))
 
 
 def create_search_outcome() -> SearchOutcomeData:
@@ -276,74 +314,76 @@ def manual_search(
         f'#{issue_number}' if issue_number else ''
     )
 
+    if volume_data.special_version == SpecialVersion.TPB:
+        formats = QUERY_FORMATS["TPB"]
+
+    elif volume_data.special_version == SpecialVersion.VOLUME_AS_ISSUE:
+        formats = QUERY_FORMATS["VAI"]
+
+    elif issue_number is None:
+        formats = QUERY_FORMATS["Volume"]
+
+    else:
+        formats = QUERY_FORMATS["Issue"]
+
+    if volume_data.year is None:
+        formats = tuple(
+            f.replace('({year})', '').strip()
+            for f in formats
+        )
+
+    queries = []
     for title in (volume_data.title, volume_data.alt_title):
         if not title:
             continue
-
-        if volume_data.special_version == SpecialVersion.TPB:
-            formats = QUERY_FORMATS["TPB"]
-
-        elif volume_data.special_version == SpecialVersion.VOLUME_AS_ISSUE:
-            formats = QUERY_FORMATS["VAI"]
-
-        elif issue_number is None:
-            formats = QUERY_FORMATS["Volume"]
-
-        else:
-            formats = QUERY_FORMATS["Issue"]
-
-        if volume_data.year is None:
-            formats = tuple(
-                f.replace('({year})', '').strip()
-                for f in formats
-            )
-
-        search_title = normalise_query_string(title).replace(':', '')
-        search_results = run(search_multiple_queries(*(
-            format.format(
-                title=search_title, volume_number=volume_data.volume_number,
-                year=volume_data.year, issue_number=issue_number
-            )
-            for format in formats
-        )))
-        if not search_results:
-            continue
-
-        results: List[MatchedSearchResultData] = [
-            {
-                **result,
-                **check_search_result_match(
-                    result, volume_data, volume_issues,
-                    number_to_year, calculated_issue_number
+        for search_title in _manual_search_title_variants(
+            title, volume_data.publisher
+        ):
+            queries.extend(
+                format.format(
+                    title=search_title,
+                    volume_number=volume_data.volume_number,
+                    year=volume_data.year,
+                    issue_number=issue_number
                 )
-            }
-            for result in search_results
-        ]
+                for format in formats
+            )
 
-        # Sort results; put best result at top
-        results.sort(key=lambda r: _rank_search_result(
-            r, search_title, volume_data.volume_number,
-            (
-                volume_data.year,
-                number_to_year.get(calculated_issue_number) # type: ignore
-            ),
-            calculated_issue_number
-        ))
+    search_results = run(search_multiple_queries(*dict.fromkeys(queries)))
+    results: List[MatchedSearchResultData] = [
+        {
+            **result,
+            **check_search_result_match(
+                result, volume_data, volume_issues,
+                number_to_year, calculated_issue_number
+            )
+        }
+        for result in search_results
+    ]
 
-        rejection_counts = Counter(
-            result['match_reason_code']
-            for result in results
-            if result['match_reason_code'] is not None
-        )
-        LOGGER.debug(
-            'Manual search results: candidates=%d matches=%d rejections=%s',
-            len(results),
-            sum(result['match'] for result in results),
-            dict(rejection_counts)
-        )
-        return results
+    # Sort results; put best result at top
+    results.sort(key=lambda r: _rank_search_result(
+        r, normalise_query_string(volume_data.title).replace(':', ''),
+        volume_data.volume_number,
+        (
+            volume_data.year,
+            number_to_year.get(calculated_issue_number) # type: ignore
+        ),
+        calculated_issue_number
+    ))
 
-    return []
+    rejection_counts = Counter(
+        result['match_reason_code']
+        for result in results
+        if result['match_reason_code'] is not None
+    )
+    LOGGER.debug(
+        'Manual search results: candidates=%d matches=%d rejections=%s',
+        len(results),
+        sum(result['match'] for result in results),
+        dict(rejection_counts)
+    )
+    return results
 
 
 def auto_search(

@@ -10,6 +10,7 @@ from backend.base.definitions import (
 from backend.implementations.matching import (
     check_search_result_match,
     file_importing_filter,
+    match_title,
 )
 
 
@@ -151,6 +152,16 @@ class SearchResultMatchingTest(unittest.TestCase):
             self.number_to_year,
             allow_special_version_mismatch=True
         ))
+
+    def test_publication_descriptors_and_possessives_match(self):
+        self.assertTrue(match_title(
+            "Archie's Double Digest Magazine",
+            'Archie Comics Double Digest'
+        ))
+
+    def test_pokemon_title_matching(self):
+        self.assertTrue(match_title('Pokemon – Classics', 'Pokémon Classics'))
+        self.assertFalse(match_title('Pokemon Classics', 'Pokemon Adventures'))
 
 
 if __name__ == '__main__':
