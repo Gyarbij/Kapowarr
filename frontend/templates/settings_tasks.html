@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% from "base.html" import icon_button %}
+{% block title %}Task Settings{% endblock %}
+{% block css %}
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
+{% endblock %}
+{% block js %}
+	<script src="{{ url_for('static', filename='js/settings_tasks.js') }}" defer></script>
+{% endblock %}
+
+{% block main %}
+<main>
+	<section class="tool-bar-container" aria-label="Tool bar">
+		<div class="tool-bar">
+			{{ icon_button("save-button", "Save the changes made", "save.svg", "Save", True) }}
+		</div>
+	</section>
+	<div class="settings-container">
+		<form id="settings-form">
+			<h2>Startup</h2>
+			<table class="fold-table">
+				<tr>
+					<th><label for="update-all-on-startup-input">Run Update All on Startup</label></th>
+					<td>
+						<input type="checkbox" id="update-all-on-startup-input">
+						<p>Run Refresh and Scan for the library after a normal application start. This does not run after a self-restart caused by a hosting or proxy change.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="search-all-on-startup-input">Run Search Missing on Startup</label></th>
+					<td>
+						<input type="checkbox" id="search-all-on-startup-input">
+						<p>Search monitored volumes for missing issues after a normal application start.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="refresh-releases-on-startup-input">Refresh Releases on Startup</label></th>
+					<td>
+						<input type="checkbox" id="refresh-releases-on-startup-input">
+						<p>Refresh the release cache and supplemental release discovery after a normal application start.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="startup-task-delay-input">Startup Task Delay</label></th>
+					<td>
+						<input type="number" id="startup-task-delay-input" min="0" step="1" required>
+						<p>Seconds to wait before startup tasks are queued. Set to 0 to queue them immediately.</p>
+					</td>
+				</tr>
+			</table>
+
+			<h2>Scheduled Tasks</h2>
+			<p>Set an interval in hours. Set an interval to 0 to disable its schedule. Disabled tasks can still be run from the <a href="{{url_base}}/system/tasks">Tasks</a> page.</p>
+			<table class="fold-table">
+				<tr>
+					<th><label for="update-all-interval-input">Update All Interval</label></th>
+					<td>
+						<input type="number" id="update-all-interval-input" min="0" step="1" required>
+						<p>How often to refresh metadata and scan the library.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="search-all-interval-input">Search Missing Interval</label></th>
+					<td>
+						<input type="number" id="search-all-interval-input" min="0" step="1" required>
+						<p>How often to search monitored volumes for missing issues.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="refresh-release-cache-interval-input">Refresh Releases Interval</label></th>
+					<td>
+						<input type="number" id="refresh-release-cache-interval-input" min="0" step="1" required>
+						<p>How often to refresh the release cache and publishers.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="refresh-release-discovery-interval-input">Release Discovery Interval</label></th>
+					<td>
+						<input type="number" id="refresh-release-discovery-interval-input" min="0" step="1" required>
+						<p>How often to check supplemental release sources.</p>
+					</td>
+				</tr>
+			</table>
+
+			<h2>Update All</h2>
+			<table class="fold-table">
+				<tr>
+					<th><label for="skip-recent-input">Skip Recently Refreshed Volumes</label></th>
+					<td>
+						<input type="checkbox" id="skip-recent-input">
+						<p>When enabled, scheduled and startup Update All tasks skip volumes refreshed within the window below. Manually run Update All tasks never skip volumes.</p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="refresh-skip-window-input">Refresh Skip Window</label></th>
+					<td>
+						<input type="number" id="refresh-skip-window-input" min="1" step="1" required>
+						<p>Hours since the last metadata refresh before a volume is eligible for a scheduled or startup Update All.</p>
+					</td>
+				</tr>
+			</table>
+		</form>
+	</div>
+</main>
+{% endblock main %}

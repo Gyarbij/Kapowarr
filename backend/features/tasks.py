@@ -18,6 +18,7 @@ from backend.base.custom_exceptions import (
     InvalidComicVineApiKey,
     TaskNotFound,
 )
+from backend.base.definitions import StartType
 from backend.base.helpers import Singleton, get_subclasses
 from backend.base.logging import LOGGER
 from backend.features.download_queue import DownloadHandler
@@ -29,14 +30,14 @@ from backend.features.search import (
 from backend.implementations.conversion import mass_convert
 from backend.implementations.naming import mass_rename
 from backend.implementations.volumes import Volume, refresh_and_scan
-from backend.internals.db import close_db, get_db
+from backend.internals.db import close_db, commit, get_db
 from backend.internals.server import (
     TaskAddedEvent,
     TaskEndedEvent,
     TaskStatusEvent,
     WebSocket,
 )
-from backend.internals.settings import Settings
+from backend.internals.settings import Settings, get_task_intervals, sync_task_intervals
 
 
 class Task(ABC):
@@ -460,7 +461,8 @@ class UpdateAll(Task):
         """Create the task
 
         Args:
-            allow_skipping (bool, optional): Skip volumes that have been updated in the last 24 hours.
+            allow_skipping (bool, optional): Skip volumes that were updated
+                within the configured refresh skip window.
                 Defaults to False.
         """
         self.allow_skipping = allow_skipping
@@ -736,8 +738,10 @@ class TaskHandler(metaclass=Singleton):
 
     queue: List[dict] = []
     queue_lock = RLock()
+    interval_lock = RLock()
     next_task_id = 1
     task_interval_waiter: Union[Timer, None] = None
+    startup_task_waiter: Union[Timer, None] = None
     stopping = False
 
     def __init__(self) -> None:
@@ -922,11 +926,14 @@ class TaskHandler(metaclass=Singleton):
             ).fetchall()
             LOGGER.debug(f'Task intervals: {list(map(dict, interval_tasks))}')
             for task in interval_tasks:
+                if task['interval'] <= 0:
+                    continue
                 if task['next_run'] <= current_time:
                     # Add task to queue
                     task_class = task_library[task['task_name']]
                     if task_class is UpdateAll:
-                        inst = task_class(allow_skipping=True)
+                        inst = task_class(
+                            allow_skipping=Settings().sv.scheduled_update_skip_recent)
                     else:
                         inst = task_class()
                     self.add(inst)
@@ -942,16 +949,106 @@ class TaskHandler(metaclass=Singleton):
 
     def handle_intervals(self) -> None:
         "Find next time an interval task needs to be run"
-        with self.context():
-            next_run = get_db().execute(
-                "SELECT MIN(next_run) FROM task_intervals"
-            ).fetchone()[0]
-        timedelta = next_run - round(time()) + 1
-        LOGGER.debug(f'Next interval task is in {timedelta} seconds')
+        with self.interval_lock:
+            if self.task_interval_waiter:
+                self.task_interval_waiter.cancel()
 
-        self.task_interval_waiter = Timer(timedelta, self.__check_intervals)
-        self.task_interval_waiter.name = "TaskIntervalThread"
-        self.task_interval_waiter.start()
+            with self.context():
+                next_run = get_db().execute(
+                    "SELECT MIN(next_run) FROM task_intervals WHERE interval > 0"
+                ).fetchone()[0]
+
+            if next_run is None:
+                self.task_interval_waiter = None
+                LOGGER.debug('No scheduled tasks are enabled')
+                return
+
+            timedelta = max(1, next_run - round(time()) + 1)
+            LOGGER.debug(f'Next interval task is in {timedelta} seconds')
+
+            self.task_interval_waiter = Timer(
+                timedelta,
+                self.__check_intervals
+            )
+            self.task_interval_waiter.name = "TaskIntervalThread"
+            self.task_interval_waiter.start()
+        return
+
+    def reschedule_intervals(self) -> None:
+        """Apply interval settings and schedule the next enabled task."""
+        if self.stopping:
+            return
+
+        with self.interval_lock:
+            if self.task_interval_waiter:
+                self.task_interval_waiter.cancel()
+            with self.context():
+                sync_task_intervals()
+                commit()
+            self.handle_intervals()
+        return
+
+    def __add_startup_tasks(self, tasks: List[Task]) -> None:
+        """Add startup tasks after their optional delay."""
+        try:
+            with self.context():
+                for task in tasks:
+                    if self.stopping:
+                        break
+                    self.add(task)
+        finally:
+            self.startup_task_waiter = None
+        return
+
+    def queue_startup_tasks(self, start_type: StartType) -> None:
+        """Queue tasks configured to run during a cold start."""
+        if start_type is not StartType.STARTUP:
+            return
+
+        settings = Settings().sv
+        tasks = []
+        if settings.update_all_on_startup:
+            tasks.append(
+                UpdateAll(
+                    allow_skipping=settings.scheduled_update_skip_recent
+                )
+            )
+        if settings.search_all_on_startup:
+            tasks.append(SearchAll())
+        if settings.refresh_releases_on_startup:
+            tasks.extend((RefreshReleaseCache(), RefreshReleaseDiscovery()))
+
+        if not tasks:
+            return
+
+        task_intervals = get_task_intervals()
+        current_time = round(time())
+        with self.context():
+            cursor = get_db()
+            for task in tasks:
+                interval = task_intervals.get(task.action, 0)
+                if interval > 0:
+                    cursor.execute(
+                        """
+                        UPDATE task_intervals
+                        SET next_run = ?
+                        WHERE task_name = ?;
+                        """,
+                        (current_time + interval, task.action)
+                    )
+            commit()
+
+        delay = settings.startup_task_delay
+        if delay:
+            self.startup_task_waiter = Timer(
+                delay,
+                self.__add_startup_tasks,
+                args=(tasks,)
+            )
+            self.startup_task_waiter.name = "StartupTaskThread"
+            self.startup_task_waiter.start()
+        else:
+            self.__add_startup_tasks(tasks)
         return
 
     def stop_handle(self) -> None:
@@ -960,6 +1057,9 @@ class TaskHandler(metaclass=Singleton):
 
         if self.task_interval_waiter:
             self.task_interval_waiter.cancel()
+
+        if self.startup_task_waiter:
+            self.startup_task_waiter.cancel()
 
         with self.queue_lock:
             self.stopping = True

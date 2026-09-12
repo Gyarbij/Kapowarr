@@ -70,7 +70,6 @@ from backend.internals.server import DownloadedStatusEvent, TaskStatusEvent, Web
 from backend.internals.settings import Settings
 
 # autopep8: off
-ONE_DAY = timedelta(days=1)
 THIRTY_DAYS = timedelta(days=30)
 split_regex = compile(r'(?<!vs)(?<!r\.i\.p)(?:(?<=[\.!\?])\s|(?<=[\.!\?]</p>)(?!$))', IGNORECASE)
 remove_link_regex = compile(r'<a[^>]*>.*?</a>', IGNORECASE)
@@ -2000,9 +1999,9 @@ def refresh_and_scan(
             the websocket.
             Defaults to False.
 
-        allow_skipping (bool, optional): Skip volumes that have been updated in
-            the last 24 hours or that have the same amount of issues as what
-            the metadata source reports.
+        allow_skipping (bool, optional): Skip volumes that have been updated
+            within the configured refresh skip window or that have the same
+            amount of issues as what the metadata source reports.
             Defaults to True.
     """
     def should_stop() -> bool:
@@ -2012,7 +2011,9 @@ def refresh_and_scan(
         return
 
     current_time = datetime.now()
-    one_day_ago = current_time - ONE_DAY
+    skip_threshold = current_time - timedelta(
+        hours=Settings().sv.refresh_skip_window
+    )
     thirty_days_ago = current_time - THIRTY_DAYS
 
     cursor = get_db()
@@ -2040,7 +2041,7 @@ def refresh_and_scan(
             """,
             (
                 *volume_ids,
-                one_day_ago.timestamp()
+                skip_threshold.timestamp()
                 if allow_skipping else
                 current_time.timestamp(),
             )
@@ -2054,7 +2055,7 @@ def refresh_and_scan(
             ORDER BY last_cv_fetch ASC;
             """,
             (
-                one_day_ago.timestamp()
+                skip_threshold.timestamp()
                 if allow_skipping else
                 current_time.timestamp(),
             )
@@ -2090,7 +2091,7 @@ def refresh_and_scan(
             WHERE v.last_cv_fetch <= ?
             GROUP BY v.id;
             """,
-            (one_day_ago.timestamp(),)
+            (skip_threshold.timestamp(),)
         ))
 
         filtered_volume_datas = [

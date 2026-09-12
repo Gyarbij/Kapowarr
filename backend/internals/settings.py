@@ -13,6 +13,7 @@ from logging import INFO
 from os import urandom
 from os.path import abspath, isdir, join, sep
 from secrets import token_bytes
+from time import time
 from typing import Any, Dict, Mapping
 
 from backend.base.custom_exceptions import (
@@ -149,6 +150,17 @@ class PublicSettingsValues:
 
     date_type: DateType = DateType.COVER_DATE
 
+    update_all_interval: int = 1
+    search_all_interval: int = 24
+    refresh_release_cache_interval: int = 1
+    refresh_release_discovery_interval: int = 1
+    scheduled_update_skip_recent: bool = True
+    refresh_skip_window: int = 24
+    update_all_on_startup: bool = False
+    search_all_on_startup: bool = False
+    refresh_releases_on_startup: bool = False
+    startup_task_delay: int = 60
+
     library_display_mode: str = 'virtual_scroll'
     theme: str = 'dark'
 
@@ -189,13 +201,13 @@ class SettingsValues(PublicSettingsValues):
     backup_url_base: str = ''
 
 
-task_intervals = {
+TASK_INTERVAL_SETTINGS = {
     # If there are tasks that should be run at the same time,
     # but per se after each other, put them in that order in the dict.
-    'update_all': 3600, # every hour
-    'search_all': 86400, # every day
-    'refresh_release_cache': 3600, # every hour
-    'refresh_release_discovery': 3600 # every hour
+    'update_all': 'update_all_interval',
+    'search_all': 'search_all_interval',
+    'refresh_release_cache': 'refresh_release_cache_interval',
+    'refresh_release_discovery': 'refresh_release_discovery_interval'
 }
 
 
@@ -328,6 +340,14 @@ class Settings(metaclass=Singleton):
             set_log_level(formatted_data['log_level'])
 
         self.clear_cache()
+
+        if any(
+            key in formatted_data
+            and formatted_data[key] != getattr(old_settings, key)
+            for key in TASK_INTERVAL_SETTINGS.values()
+        ):
+            from backend.features.tasks import TaskHandler
+            TaskHandler().reschedule_intervals()
 
         LOGGER.info(f'Settings changed: {formatted_data}')
 
@@ -513,6 +533,15 @@ class Settings(metaclass=Singleton):
         elif key == 'failing_download_timeout' and value < 0:
             raise InvalidKeyValue(key, value)
 
+        elif key in TASK_INTERVAL_SETTINGS.values() and value < 0:
+            raise InvalidKeyValue(key, value)
+
+        elif key == 'refresh_skip_window' and value < 1:
+            raise InvalidKeyValue(key, value)
+
+        elif key == 'startup_task_delay' and value < 0:
+            raise InvalidKeyValue(key, value)
+
         elif key == 'volume_padding' and not 1 <= value <= 3:
             raise InvalidKeyValue(key, value)
 
@@ -672,3 +701,64 @@ class Settings(metaclass=Singleton):
                     )
 
         return
+
+
+def get_task_intervals() -> Dict[str, int]:
+    """Get task intervals in seconds from the current settings."""
+    settings = Settings().sv
+    return {
+        task_name: getattr(settings, setting_key) * 60 * 60
+        for task_name, setting_key in TASK_INTERVAL_SETTINGS.items()
+    }
+
+
+def sync_task_intervals() -> None:
+    """Synchronize scheduled task intervals with their settings."""
+    cursor = get_db()
+    current_time = round(time())
+    existing = {
+        row['task_name']: row
+        for row in cursor.execute(
+            "SELECT task_name, interval, next_run FROM task_intervals;"
+        )
+    }
+
+    for task_name, interval in get_task_intervals().items():
+        task = existing.get(task_name)
+        if task is None:
+            cursor.execute(
+                "INSERT INTO task_intervals VALUES (?, ?, ?);",
+                (task_name, interval, current_time)
+            )
+            continue
+
+        if interval == 0:
+            cursor.execute(
+                "UPDATE task_intervals SET interval = ? WHERE task_name = ?;",
+                (interval, task_name)
+            )
+        elif task['interval'] == 0:
+            cursor.execute(
+                """
+                UPDATE task_intervals
+                SET interval = ?, next_run = ?
+                WHERE task_name = ?;
+                """,
+                (interval, current_time + interval, task_name)
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE task_intervals
+                SET interval = ?, next_run = ?
+                WHERE task_name = ?;
+                """,
+                (
+                    interval,
+                    min(task['next_run'], current_time + interval),
+                    task_name
+                )
+            )
+
+    commit()
+    return

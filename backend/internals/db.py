@@ -17,7 +17,6 @@ from sqlite3 import (
     register_converter,
 )
 from threading import RLock, current_thread, enumerate
-from time import time
 from typing import Any, Dict, Iterable, Iterator, List, Type, Union
 
 from flask import g
@@ -351,7 +350,7 @@ def setup_db_adapters_and_converters() -> None:
 def setup_db() -> None:
     """Setup the default config and database connection and tables"""
     from backend.internals.db_migration import DatabaseMigrationHandler
-    from backend.internals.settings import Settings, task_intervals
+    from backend.internals.settings import Settings, sync_task_intervals
 
     cursor = get_db()
     cursor.execute("PRAGMA journal_mode = wal;")
@@ -371,20 +370,7 @@ def setup_db() -> None:
     if not settings_values.api_key:
         settings.generate_api_key()
 
-    # Add task intervals
-    LOGGER.debug(f'Inserting task intervals: {task_intervals}')
-    current_time = round(time())
-    cursor.executemany(
-        """
-        INSERT INTO task_intervals
-        VALUES (?, ?, ?)
-        ON CONFLICT(task_name) DO
-        UPDATE
-        SET
-            interval = ?;
-        """,
-        ((k, v, current_time, v) for k, v in task_intervals.items())
-    )
+    sync_task_intervals()
 
     return
 
