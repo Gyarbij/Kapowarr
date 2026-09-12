@@ -258,16 +258,20 @@ function updatePaginationControls() {
 	}
 
 	library_els.pagination.container.classList.remove('hidden');
-	library_els.pagination.info.innerText =
-		`Page ${paginationState.currentPage} of ${paginationState.totalPages} (${paginationState.totalItems} volumes)`;
+	if (paginationState.pageSize === 0) {
+		library_els.pagination.info.innerText = `All (${paginationState.totalItems} volumes)`;
+	} else {
+		library_els.pagination.info.innerText =
+			`Page ${paginationState.currentPage} of ${paginationState.totalPages} (${paginationState.totalItems} volumes)`;
+	}
 
 	library_els.pagination.first.disabled =
 	library_els.pagination.prev.disabled =
-		paginationState.currentPage <= 1;
+		paginationState.pageSize === 0 || paginationState.currentPage <= 1;
 
 	library_els.pagination.next.disabled =
 	library_els.pagination.last.disabled =
-		paginationState.currentPage >= paginationState.totalPages;
+		paginationState.pageSize === 0 || paginationState.currentPage >= paginationState.totalPages;
 }
 
 function getVolumeParams() {
@@ -599,7 +603,9 @@ library_els.view_options.publisher.value = lib_options.lib_publisher_filter || '
 library_els.view_options.description.value = lib_options.lib_description_filter || '';
 
 if (lib_options.lib_page_size !== null && lib_options.lib_page_size !== undefined) {
-	paginationState.pageSize = parseInt(lib_options.lib_page_size) || 50;
+	const storedPageSize = parseInt(lib_options.lib_page_size, 10);
+	if (!Number.isNaN(storedPageSize))
+		paginationState.pageSize = storedPageSize;
 }
 library_els.pagination.size.value = String(paginationState.pageSize);
 
@@ -666,7 +672,15 @@ Promise.all([usingApiKey(), socketReady])
 		library_els.pagination.next.onclick = () => goToPage(paginationState.currentPage + 1, api_key);
 		library_els.pagination.last.onclick = () => goToPage(paginationState.totalPages, api_key);
 		library_els.pagination.size.onchange = () => {
-			paginationState.pageSize = parseInt(library_els.pagination.size.value) || 50;
+			const previousPageSize = paginationState.pageSize;
+			const selectedPageSize = parseInt(library_els.pagination.size.value, 10);
+			if (selectedPageSize === 0 && !window.confirm(
+				'Load all volumes in the filtered library? This may use substantial memory and take a long time.'
+			)) {
+				library_els.pagination.size.value = String(previousPageSize);
+				return;
+			}
+			paginationState.pageSize = Number.isNaN(selectedPageSize) ? 50 : selectedPageSize;
 			paginationState.currentPage = 1;
 			setLocalStorage({'lib_page_size': String(paginationState.pageSize)});
 			fetchLibrary(api_key);
