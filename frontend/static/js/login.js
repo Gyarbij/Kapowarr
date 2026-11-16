@@ -60,12 +60,17 @@ function redirect() {
 
 	if (
 		redirectValue
-		&& redirectValue.startsWith(`${url_base}/`)
+		&& (
+			redirectValue === url_base
+			|| redirectValue.startsWith(`${url_base}/`)
+		)
 		&& !redirectValue.startsWith("//")
 		&& !redirectValue.startsWith("\\")
 		// ASCII control characters
 		&& !/[\u0000-\u001F]/.test(redirectValue)
-		|| redirectValue === url_base
+		// Browsers read '\' as '/', so '/\host' would lead to another site
+		&& new URL(redirectValue, window.location.origin).origin
+			=== window.location.origin
 	)
 		window.location.href = redirectValue
 	else
