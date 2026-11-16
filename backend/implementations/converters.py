@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from itertools import chain
 from os import utime
-from os.path import basename, dirname, getmtime, join, splitext
+from os.path import basename, dirname, getmtime, isdir, isfile, join, splitext
 from typing import Dict, List, Set, Tuple, Union
 from zipfile import ZipFile
 
@@ -267,6 +267,10 @@ class ConvertersManager:
         runs_64bit = System.runs_64bit
         source_format = splitext(filepath)[1].lower().lstrip('.')
 
+        if source_format not in cls.converters:
+            # Can't convert from this source format
+            return None
+
         if (
             settings.extract_issue_ranges
             and source_format in cls.formats_convertible_to_folder()
@@ -324,19 +328,28 @@ def zip_to_rar(file: str) -> List[str]:
     with ZipFile(file, 'r') as zip:
         zip.extractall(archive_folder)
 
-    run_rar([
+    target_file = splitext(file)[0] + '.rar'
+    result = run_rar([
         'a', # Add files to archive
         '-ep', # Exclude paths from names
         '-inul', # Disable all messages
-        splitext(file)[0], # Ext-less target filename of created archive
+        target_file, # Target filename of created archive
         archive_folder # Source folder
     ])
+
+    if result.returncode != 0 or not isfile(target_file):
+        LOGGER.error(f"Failed to rar up files: Error {result.returncode}")
+        if isdir(archive_folder):
+            delete_file_folder(archive_folder)
+        if isfile(target_file):
+            delete_file_folder(target_file)
+        return [file]
 
     delete_file_folder(archive_folder)
     delete_file_folder(file)
     delete_empty_parent_folders(dirname(file), volume_folder)
 
-    return [splitext(file)[0] + '.rar']
+    return [target_file]
 
 
 @ConvertersManager.register_converter("zip", "cbr", supports_32bit=False)
@@ -434,12 +447,18 @@ def rar_to_zip(file: str) -> List[str]:
     archive_folder = generate_archive_folder(volume_folder, file)
     create_folder(archive_folder)
 
-    run_rar([
+    result = run_rar([
         'x', # Extract files with full path
         '-inul', # Disable all messages
         file, # Source archive file
         archive_folder # Target folder to extract into
     ])
+
+    if result.returncode != 0 or not list_files(archive_folder):
+        LOGGER.error(f"Failed to unrar files: Error {result.returncode}")
+        if isdir(archive_folder):
+            delete_file_folder(archive_folder)
+        return [file]
 
     # Files that are put in a ZIP file have to have a minimum last
     # modification time.

@@ -4,7 +4,29 @@ from unittest.mock import patch
 from flask import Flask
 
 from backend.internals.server import Server
-from frontend.ui import ui
+from frontend.ui import render, ui
+
+
+class ThemeRenderTest(unittest.TestCase):
+    def _rendered_theme(self, cookie=None):
+        app = Flask(__name__)
+        headers = {'Cookie': f'theme={cookie}'} if cookie is not None else {}
+        with app.test_request_context(headers=headers), patch(
+            'frontend.ui.render_template',
+            return_value=''
+        ) as render_template:
+            render('volumes.html')
+
+        return render_template.call_args.kwargs['theme']
+
+    def test_dark_theme_cookie_is_rendered(self):
+        self.assertEqual(self._rendered_theme('dark-mode'), 'dark-mode')
+
+    def test_missing_cookie_renders_default_theme(self):
+        self.assertEqual(self._rendered_theme(), '')
+
+    def test_unknown_theme_cookie_is_ignored(self):
+        self.assertEqual(self._rendered_theme('injected-class'), '')
 
 
 class ReleasesRouteTest(unittest.TestCase):

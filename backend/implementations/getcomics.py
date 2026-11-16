@@ -394,6 +394,9 @@ def __sort_link_paths(p: List[DownloadGroup]) -> Tuple[float, int]:
     Returns:
         Tuple[float, int]: The rating (lower is better).
     """
+    if not p:
+        return (float('inf'), 1)
+
     if p[0]['info']['special_version']:
         return (0.0, 0)
 
@@ -790,8 +793,8 @@ async def search_getcomics(
     # Fetch pages beyond first concurrently
     other_tasks = [
         session.get_text(
-            f"{Constants.GC_SITE_URL}/page/{page}",
-            params={"s": query},
+            f"{Constants.GC_SITE_URL}/",
+            params={"s": query, "paged": page},
             quiet_fail=True
         )
         for page in range(2, max_page + 1)

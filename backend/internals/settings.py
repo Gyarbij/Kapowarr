@@ -431,7 +431,7 @@ class Settings(metaclass=Singleton):
         self.update({"api_key": api_key}, from_public=False)
         self.clear_cache()
 
-        LOGGER.info(f'Setting api key regenerated: {api_key}')
+        LOGGER.info('Setting api key regenerated')
         return
 
     def backup_hosting_settings(self) -> None:
@@ -451,7 +451,7 @@ class Settings(metaclass=Singleton):
         restore_settings = {
             'host': s.backup_host,
             'port': s.backup_port,
-            'url_prefix': s.backup_url_base
+            'url_base': s.backup_url_base
         }
         self.update(restore_settings)
         return
@@ -710,7 +710,7 @@ class Settings(metaclass=Singleton):
             InvalidKeyValue: Value of the key is not allowed.
         """
         settings_after_update = SettingsValues(**{
-            **self.get_settings().todict(),
+            **self.get_settings().todict(to_public=False),
             **formatted_data
         })
 

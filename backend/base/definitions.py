@@ -102,7 +102,10 @@ class Constants:
     BACKOFF_FACTOR_RETRIES = 1
     "Backoff factor for waiting in-between retries"
 
-    STATUS_FORCELIST_RETRIES = (429, 500, 502, 503, 504)
+    STATUS_FORCELIST_RETRIES = (
+        429, 500, 502, 503, 504,
+        522 # CloudFlare timed out connecting to host server
+    )
     "The HTTP status codes for which a retry should be done"
 
     PROXY_TEST_URL = "https://httpbin.org/ip"
@@ -130,6 +133,9 @@ class Constants:
 
     FS_API_BASE = "/v1"
     "The base endpoint of the FlareSolverr API"
+
+    FS_RESOLVE_TIMEOUT = 300 # seconds
+    "Timeout for FlareSolverr to solve the challenge"
 
     MAX_CONCURRENT_FS_SESSIONS = 2
     "The maximum amount of FlareSolverr browser sessions that can concurrently run"

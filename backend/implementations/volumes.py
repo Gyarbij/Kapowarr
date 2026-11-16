@@ -75,6 +75,7 @@ from backend.internals.settings import Settings
 THIRTY_DAYS = timedelta(days=30)
 split_regex = compile(r'(?<!vs)(?<!r\.i\.p)(?:(?<=[\.!\?])\s|(?<=[\.!\?]</p>)(?!$))', IGNORECASE)
 remove_link_regex = compile(r'<a[^>]*>.*?</a>', IGNORECASE)
+annual_regex = compile(r'\bannual\b', IGNORECASE)
 omnibus_regex = compile(r'\bomnibus\b', IGNORECASE)
 os_regex = compile(r'(?<!preceding\s)\bone[\- ]?shot\b(?!\scollections?)', IGNORECASE)
 hc_regex = compile(r'(?<!preceding\s)\bhard[\- ]?cover\b(?!\scollections?)', IGNORECASE)
@@ -929,10 +930,16 @@ class Volume:
             new_root_folder
         )
         for old_name, new_name in file_changes.items():
+            if not exists(old_name):
+                # File doesn't exist anymore. Maybe it got deleted with no R&S
+                # or it's already at the destination.
+                continue
+
             rename_file(
                 old_name,
                 new_name
             )
+
         if isdir(volume_data.folder):
             delete_empty_child_folders(volume_data.folder)
 
@@ -2032,6 +2039,9 @@ def determine_special_version(volume_id: int) -> SpecialVersion:
 
         if tpb_regex.search(first_sentence):
             return SpecialVersion.TPB
+
+        if annual_regex.search(first_sentence):
+            return SpecialVersion.NORMAL
 
     if one_issue and issues[0].date:
         thirty_plus_days_ago = (

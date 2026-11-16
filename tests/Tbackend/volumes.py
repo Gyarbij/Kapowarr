@@ -11,8 +11,14 @@ from backend.base.definitions import (
     LibraryDateFilter,
     LibraryFilter,
     LibraryStatusFilter,
+    SpecialVersion,
 )
-from backend.implementations.volumes import Issue, Library, Volume
+from backend.implementations.volumes import (
+    Issue,
+    Library,
+    Volume,
+    determine_special_version,
+)
 
 
 class ActivityMutationTest(unittest.TestCase):
@@ -287,6 +293,35 @@ class LibraryFilterTest(unittest.TestCase):
         connection.close()
 
         self.assertEqual(result, [(1,)])
+
+
+class DetermineSpecialVersionTest(unittest.TestCase):
+    def _determine(self, description):
+        volume = MagicMock()
+        volume.get_data.return_value = SimpleNamespace(
+            title='Iron Fist',
+            description=description
+        )
+        volume.get_issues.return_value = [
+            SimpleNamespace(title='', date='2000-01-01')
+        ]
+        with patch(
+            'backend.implementations.volumes.Volume',
+            return_value=volume
+        ):
+            return determine_special_version(1)
+
+    def test_old_single_issue_volume_is_tpb(self):
+        self.assertEqual(
+            self._determine('<p>A story about Danny Rand.</p>'),
+            SpecialVersion.TPB
+        )
+
+    def test_annual_in_description_is_not_tpb(self):
+        self.assertEqual(
+            self._determine('<p>The first annual of Iron Fist.</p>'),
+            SpecialVersion.NORMAL
+        )
 
 
 if __name__ == '__main__':
