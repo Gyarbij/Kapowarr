@@ -431,7 +431,7 @@ class Settings(metaclass=Singleton):
         self.update({"api_key": api_key}, from_public=False)
         self.clear_cache()
 
-        LOGGER.info(f'Setting api key regenerated: {api_key}')
+        LOGGER.info('Setting api key regenerated')
         return
 
     def backup_hosting_settings(self) -> None:
