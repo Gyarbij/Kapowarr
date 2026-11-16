@@ -96,6 +96,7 @@ function loadProposal(apiKey) {
 
 				if (
 					e.ctrlKey
+					|| e.metaKey
 					|| e.shiftKey && shiftSelectStart === null
 				) {
 					if (selectedRows.has(rowid))
