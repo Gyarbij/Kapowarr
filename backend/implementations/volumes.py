@@ -75,6 +75,7 @@ from backend.internals.settings import Settings
 THIRTY_DAYS = timedelta(days=30)
 split_regex = compile(r'(?<!vs)(?<!r\.i\.p)(?:(?<=[\.!\?])\s|(?<=[\.!\?]</p>)(?!$))', IGNORECASE)
 remove_link_regex = compile(r'<a[^>]*>.*?</a>', IGNORECASE)
+annual_regex = compile(r'\bannual\b', IGNORECASE)
 omnibus_regex = compile(r'\bomnibus\b', IGNORECASE)
 os_regex = compile(r'(?<!preceding\s)\bone[\- ]?shot\b(?!\scollections?)', IGNORECASE)
 hc_regex = compile(r'(?<!preceding\s)\bhard[\- ]?cover\b(?!\scollections?)', IGNORECASE)
@@ -2032,6 +2033,9 @@ def determine_special_version(volume_id: int) -> SpecialVersion:
 
         if tpb_regex.search(first_sentence):
             return SpecialVersion.TPB
+
+        if annual_regex.search(first_sentence):
+            return SpecialVersion.NORMAL
 
     if one_issue and issues[0].date:
         thirty_plus_days_ago = (
