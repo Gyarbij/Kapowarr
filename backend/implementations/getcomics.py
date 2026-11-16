@@ -793,8 +793,8 @@ async def search_getcomics(
     # Fetch pages beyond first concurrently
     other_tasks = [
         session.get_text(
-            f"{Constants.GC_SITE_URL}/page/{page}",
-            params={"s": query},
+            f"{Constants.GC_SITE_URL}/",
+            params={"s": query, "paged": page},
             quiet_fail=True
         )
         for page in range(2, max_page + 1)
