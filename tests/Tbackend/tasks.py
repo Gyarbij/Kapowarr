@@ -1,6 +1,7 @@
 import unittest
+from time import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from flask import Flask
 
@@ -12,11 +13,17 @@ from backend.features.tasks import (
     SearchAll,
     TaskHandler,
     UpdateAll,
+    UpdateNewReleases,
 )
 from frontend import api
 
 
 class TaskFlowTest(unittest.TestCase):
+    def setUp(self):
+        attempts_patch = patch.dict(UpdateNewReleases.last_attempts, clear=True)
+        attempts_patch.start()
+        self.addCleanup(attempts_patch.stop)
+
     @staticmethod
     def _handler():
         handler = object.__new__(TaskHandler)
@@ -294,6 +301,9 @@ class TaskFlowTest(unittest.TestCase):
         with patch(
             'backend.implementations.release_discovery.get_release_discovery',
             return_value=discovered
+        ), patch(
+            'backend.features.tasks.find_volumes_with_new_releases',
+            return_value=set()
         ):
             result = RefreshReleaseDiscovery().run()
 
@@ -303,6 +313,197 @@ class TaskFlowTest(unittest.TestCase):
             3643,
             306
         )])
+
+    @patch('backend.features.tasks.WebSocket')
+    @patch('backend.features.tasks.auto_search')
+    @patch('backend.features.tasks.get_db')
+    def test_discovery_refreshes_pending_volume_and_searches_new_issue(
+        self,
+        get_db,
+        auto_search,
+        _websocket
+    ):
+        # Nothing was pending before this run
+        get_db.return_value.execute.return_value.__iter__.return_value = \
+            iter(())
+        auto_search.return_value = [{
+            'link': 'https://getcomics.org/dc/lobo-7-2026/'
+        }]
+        announced = {
+            'record_key': 'lobo:7',
+            'local_status': 'metadata_pending',
+            'local_volume_id': 3643,
+            'local_issue_id': None
+        }
+        resolved = {
+            **announced,
+            'local_status': 'missing_monitored',
+            'local_issue_id': 307
+        }
+
+        with patch(
+            'backend.implementations.release_discovery.get_release_discovery',
+            side_effect=([announced], [resolved])
+        ), patch(
+            'backend.features.tasks.find_volumes_with_new_releases',
+            return_value={3643}
+        ), patch(
+            'backend.features.tasks.refresh_release_volumes',
+            return_value=[3643]
+        ) as refresh:
+            result = RefreshReleaseDiscovery().run()
+
+        self.assertEqual(refresh.call_args.args[0], {3643})
+        auto_search.assert_called_once_with(3643, 307)
+        self.assertEqual(result, [(
+            'https://getcomics.org/dc/lobo-7-2026/',
+            3643,
+            307
+        )])
+
+    @patch('backend.features.tasks.WebSocket')
+    @patch('backend.features.tasks.Settings')
+    def test_release_cache_refresh_updates_volumes_with_new_releases(
+        self,
+        settings,
+        _websocket
+    ):
+        settings.return_value.sv.metadata_source = 'comicvine'
+        cache = MagicMock()
+        cache.get_releases = AsyncMock(return_value=[])
+        cache.get_publishers = AsyncMock(return_value=[])
+
+        with patch(
+            'backend.implementations.metadata_sources.get_metadata_source'
+        ), patch(
+            'backend.implementations.metadata_cache.MetadataCache',
+            return_value=cache
+        ), patch(
+            'backend.features.tasks.find_volumes_with_new_releases',
+            return_value={8}
+        ), patch(
+            'backend.features.tasks.refresh_release_volumes'
+        ) as refresh:
+            task = RefreshReleaseCache()
+            TaskHandler.queue = [{'id': 1, 'task': task, 'status': 'running'}]
+            try:
+                # Deleting the volume is blocked while it's being refreshed
+                refresh.side_effect = lambda volume_ids, stop_check: (
+                    self.assertTrue(TaskHandler.task_for_volume_running(8)),
+                    self.assertFalse(TaskHandler.task_for_volume_running(9))
+                )
+                task.run()
+            finally:
+                TaskHandler.queue = []
+
+        self.assertEqual(refresh.call_args.args[0], {8})
+
+    @patch('backend.features.tasks.WebSocket')
+    @patch('backend.features.tasks.refresh_release_volumes')
+    @patch('backend.features.tasks.find_volumes_with_new_releases')
+    @patch('backend.features.tasks.get_db')
+    def test_new_release_update_skips_volumes_refreshed_since_request(
+        self,
+        get_db,
+        find_volumes,
+        refresh,
+        _websocket
+    ):
+        find_volumes.return_value = {9}
+        refresh.side_effect = lambda volume_ids, stop_check: sorted(volume_ids)
+        with patch('backend.features.tasks.time', return_value=1000):
+            task = UpdateNewReleases([4, 5, 6])
+        # 4 was not refreshed since, 5 was, and 6 doesn't exist anymore
+        get_db.return_value.execute.return_value = [(4, 900), (5, 1100)]
+
+        task.run()
+
+        self.assertEqual(refresh.call_args.args[0], {4, 9})
+        self.assertEqual(task.volume_ids, {4, 9})
+        self.assertEqual(task.summary, 'Updated 2 volumes with new releases')
+
+    @patch.object(TaskHandler, 'add', return_value=3)
+    @patch('backend.features.tasks.find_volumes_with_new_releases')
+    def test_new_release_update_is_only_queued_when_needed(
+        self,
+        find_volumes,
+        add
+    ):
+        handler = self._handler()
+        TaskHandler.queue = []
+        try:
+            find_volumes.return_value = set()
+            self.assertIsNone(handler.update_new_releases())
+            add.assert_not_called()
+
+            find_volumes.return_value = {2}
+            self.assertEqual(handler.update_new_releases([5]), 3)
+            self.assertEqual(add.call_args.args[0].volume_ids, {2, 5})
+        finally:
+            TaskHandler.queue = []
+
+    @patch.object(TaskHandler, 'add', return_value=3)
+    @patch('backend.features.tasks.find_volumes_with_new_releases')
+    def test_new_release_update_reuses_task_in_queue(
+        self,
+        find_volumes,
+        add
+    ):
+        handler = self._handler()
+        queued = UpdateNewReleases([1])
+        running = UpdateNewReleases([7, 8])
+        TaskHandler.queue = [
+            {'id': 10, 'task': running, 'status': 'running'},
+            {'id': 11, 'task': queued, 'status': 'queued'}
+        ]
+        try:
+            # Already being refreshed by the running task
+            find_volumes.return_value = {7}
+            self.assertEqual(handler.update_new_releases(), 10)
+            self.assertEqual(queued.volume_ids, {1})
+
+            # Not covered by the running task, so added to the waiting one
+            find_volumes.return_value = {2}
+            self.assertEqual(handler.update_new_releases([5]), 11)
+            self.assertEqual(queued.volume_ids, {1, 2, 5})
+
+            add.assert_not_called()
+            self.assertTrue(TaskHandler.task_for_volume_running(5))
+            self.assertFalse(TaskHandler.task_for_volume_running(3))
+        finally:
+            TaskHandler.queue = []
+
+    @patch.object(TaskHandler, 'add', return_value=3)
+    @patch('backend.features.tasks.find_volumes_with_new_releases')
+    @patch('backend.features.tasks.get_db')
+    def test_new_release_update_is_not_repeated_for_failed_volumes(
+        self,
+        get_db,
+        find_volumes,
+        add
+    ):
+        handler = self._handler()
+        TaskHandler.queue = []
+        find_volumes.return_value = {1, 2, 3}
+        now = time()
+        # An update of 1 and 2 was started a minute ago, and of 3 hours ago
+        UpdateNewReleases.last_attempts.update({
+            1: now - 60,
+            2: now - 60,
+            3: now - 2 * UpdateNewReleases.ATTEMPT_INTERVAL
+        })
+        # It only got 2 refreshed, for example because of the rate limit
+        get_db.return_value.execute.return_value = [
+            (1, now - 5000),
+            (2, now - 50)
+        ]
+
+        try:
+            handler.update_new_releases()
+
+            self.assertEqual(add.call_args.args[0].volume_ids, {2, 3})
+        finally:
+            TaskHandler.queue = []
 
     def test_disabled_intervals_do_not_arm_timer(self):
         handler = self._handler()

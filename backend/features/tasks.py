@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from threading import RLock, Thread, Timer
 from time import sleep, time
-from typing import Dict, List, Tuple, Type, Union
+from typing import Dict, Iterable, List, Set, Tuple, Type, Union
 
 from flask import Flask
 
@@ -35,6 +35,10 @@ from backend.features.search import (
 )
 from backend.implementations.conversion import mass_convert
 from backend.implementations.naming import mass_rename
+from backend.implementations.release_refresh import (
+    find_volumes_with_new_releases,
+    refresh_release_volumes,
+)
 from backend.implementations.volumes import Volume, refresh_and_scan
 from backend.internals.db import close_db, commit, get_db
 from backend.internals.server import (
@@ -579,6 +583,147 @@ class RefreshAndSearchAll(SearchAll):
         return super().run()
 
 
+class UpdateNewReleases(Task):
+    "Refresh and scan the volumes that are behind on known new releases"
+
+    stop = False
+    message = ''
+    action = 'update_new_releases'
+    display_title = 'Update New Releases'
+    category = ''
+
+    ATTEMPT_INTERVAL = 60 * 60
+    """
+    The time in seconds in which a volume isn't updated again on request, when
+    an update didn't get it refreshed. This is the case when the update could
+    not be done, for example because the rate limit was reached.
+    """
+
+    last_attempts: Dict[int, float] = {}
+    "The time at which the last update of each volume was started"
+
+    @classmethod
+    def get_recently_failed(cls, volume_ids: Iterable[int]) -> Set[int]:
+        """Get the volumes for which an update was started recently, without
+        that getting them refreshed.
+
+        Args:
+            volume_ids (Iterable[int]): The IDs of the volumes to check.
+
+        Returns:
+            Set[int]: The IDs of the volumes that were not refreshed.
+        """
+        retry_before = time() - cls.ATTEMPT_INTERVAL
+        attempts = {
+            volume_id: cls.last_attempts[volume_id]
+            for volume_id in volume_ids
+            if cls.last_attempts.get(volume_id, 0) > retry_before
+        }
+        if not attempts:
+            return set()
+
+        last_fetches = dict(get_db().execute(
+            f"""
+            SELECT id, last_cv_fetch
+            FROM volumes
+            WHERE id IN ({','.join('?' * len(attempts))});
+            """,
+            tuple(attempts)
+        ))
+        return {
+            volume_id
+            for volume_id, attempted_at in attempts.items()
+            if (last_fetches.get(volume_id) or 0) < attempted_at
+        }
+
+    @property
+    def volume_id(self) -> None:
+        return None
+
+    @property
+    def issue_id(self) -> None:
+        return None
+
+    @property
+    def volume_ids(self) -> Set[int]:
+        return set(self.requested_volumes)
+
+    def __init__(self, volume_ids: Iterable[int] = ()) -> None:
+        """Create the task
+
+        Args:
+            volume_ids (Iterable[int], optional): The IDs of volumes to
+                refresh, on top of the volumes for which the stored release
+                data has something new.
+                Defaults to ().
+        """
+        self.requested_volumes: Dict[int, float] = {}
+        self.request_volumes(volume_ids)
+        return
+
+    def request_volumes(self, volume_ids: Iterable[int]) -> None:
+        """Add volumes to refresh.
+
+        Args:
+            volume_ids (Iterable[int]): The IDs of the volumes.
+        """
+        current_time = time()
+        self.requested_volumes.update(
+            (volume_id, current_time)
+            for volume_id in volume_ids
+        )
+        return
+
+    def __get_volumes_still_behind(self) -> List[int]:
+        """Leave out the requested volumes that were already refreshed in
+        between requesting it and the task being run.
+
+        Returns:
+            List[int]: The IDs of the volumes that still need a refresh.
+        """
+        if not self.requested_volumes:
+            return []
+
+        last_fetches = dict(get_db().execute(
+            f"""
+            SELECT id, last_cv_fetch
+            FROM volumes
+            WHERE id IN ({','.join('?' * len(self.requested_volumes))});
+            """,
+            tuple(self.requested_volumes)
+        ))
+        return [
+            volume_id
+            for volume_id, requested_at in self.requested_volumes.items()
+            if volume_id in last_fetches
+            and (last_fetches[volume_id] or 0) <= requested_at
+        ]
+
+    def run(self) -> None:
+        self.message = 'Updating volumes with new releases'
+        WebSocket().emit(TaskStatusEvent(self.message))
+
+        volume_ids = (
+            set(self.__get_volumes_still_behind())
+            | find_volumes_with_new_releases()
+        )
+        self.requested_volumes = dict.fromkeys(volume_ids, time())
+        self.last_attempts.update(self.requested_volumes)
+        refreshed = refresh_release_volumes(
+            volume_ids,
+            stop_check=lambda: self.stop
+        )
+
+        self.summary = (
+            f'Updated {len(refreshed)} '
+            f'{"volume" if len(refreshed) == 1 else "volumes"} '
+            'with new releases'
+        )
+        self.message = self.summary
+        WebSocket().emit(TaskStatusEvent(self.message))
+        return
+
+
 class RefreshReleaseCache(Task):
     "Refresh the release cache with new and upcoming comics"
 
@@ -597,6 +742,7 @@ class RefreshReleaseCache(Task):
         return None
 
     def __init__(self) -> None:
+        self.volume_ids: Set[int] = set()
         return
 
     def run(self) -> None:
@@ -650,6 +796,15 @@ class RefreshReleaseCache(Task):
             LOGGER.warning(
                 'Invalid metadata credentials, skipping release cache refresh'
             )
+            return
+
+        if self.stop:
+            return
+
+        # The releases could include issues that the volumes in the library
+        # don't have yet.
+        self.volume_ids = find_volumes_with_new_releases()
+        refresh_release_volumes(self.volume_ids, stop_check=lambda: self.stop)
 
         return
 
@@ -672,6 +827,7 @@ class RefreshReleaseDiscovery(Task):
         return None
 
     def __init__(self) -> None:
+        self.volume_ids: Set[int] = set()
         return
 
     def run(self) -> List[Tuple[str, int, Union[int, None]]]:
@@ -689,10 +845,31 @@ class RefreshReleaseDiscovery(Task):
             )
         }
         today = datetime.now().date()
-        items = async_run(get_release_discovery(
+        date_range = (
             (today - timedelta(days=60)).isoformat(),
             (today + timedelta(days=30)).isoformat()
-        ))
+        )
+        items = async_run(get_release_discovery(*date_range))
+
+        # Volumes with an announced release that their metadata doesn't have
+        # are refreshed now, instead of waiting until the library update gets
+        # to them. Then the issues that it brought in can be searched for.
+        if not self.stop:
+            self.volume_ids = find_volumes_with_new_releases()
+
+        if refresh_release_volumes(
+            self.volume_ids,
+            stop_check=lambda: self.stop
+        ):
+            pending_keys.update(
+                item['record_key']
+                for item in items
+                if item['local_status'] == 'metadata_pending'
+            )
+            items = async_run(get_release_discovery(*date_range))
+
+        if self.stop:
+            return []
 
         downloads = []
         promoted = 0
@@ -916,9 +1093,58 @@ class TaskHandler(metaclass=Singleton):
             if isinstance(task, (UpdateAll, SearchAll)):
                 if task.volume_ids is None or volume_id in task.volume_ids:
                     return True
+            elif isinstance(task, (
+                UpdateNewReleases,
+                RefreshReleaseCache,
+                RefreshReleaseDiscovery
+            )):
+                if volume_id in task.volume_ids:
+                    return True
             elif task.volume_id == volume_id:
                 return True
         return False
+
+    def update_new_releases(
+        self,
+        volume_ids: Iterable[int] = ()
+    ) -> Union[int, None]:
+        """Have the volumes that are behind on new releases be refreshed in the
+        background, if there are any.
+
+        Volumes that an update recently failed to refresh are left out, so
+        that repeated requests can't keep starting updates that don't help.
+        The release tasks do try those again.
+
+        Args:
+            volume_ids (Iterable[int], optional): The IDs of volumes that are
+                known to be behind, on top of the volumes for which the stored
+                release data has something new.
+                Defaults to ().
+
+        Returns:
+            Union[int, None]: The ID of the task in the queue that takes care
+                of it, or `None` if there are no volumes to refresh.
+        """
+        volume_ids = set(volume_ids) | find_volumes_with_new_releases()
+        volume_ids -= UpdateNewReleases.get_recently_failed(volume_ids)
+        if not volume_ids:
+            return None
+
+        with self.queue_lock:
+            for entry in self.queue:
+                task = entry['task']
+                if not isinstance(task, UpdateNewReleases):
+                    continue
+
+                if entry['status'] == 'queued':
+                    task.request_volumes(volume_ids)
+                    return entry['id']
+
+                if volume_ids <= task.volume_ids:
+                    # Already being refreshed
+                    return entry['id']
+
+            return self.add(UpdateNewReleases(volume_ids))
 
     def __check_intervals(self) -> None:
         "Check if any interval task needs to be run and add to queue if so"

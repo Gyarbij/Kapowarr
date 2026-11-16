@@ -2,7 +2,7 @@ import json
 import sqlite3
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.base.custom_exceptions import InvalidKeyValue
 from backend.base.definitions import (
@@ -18,6 +18,7 @@ from backend.implementations.volumes import (
     Library,
     Volume,
     determine_special_version,
+    refresh_and_scan,
 )
 
 
@@ -321,6 +322,112 @@ class DetermineSpecialVersionTest(unittest.TestCase):
         self.assertEqual(
             self._determine('<p>The first annual of Iron Fist.</p>'),
             SpecialVersion.NORMAL
+        )
+
+
+class RefreshAndScanTest(unittest.TestCase):
+    OLD_FETCH = 1_000_000
+
+    def setUp(self):
+        self.connection = sqlite3.connect(':memory:')
+        self.connection.row_factory = sqlite3.Row
+        self.cursor = self.connection.cursor()
+        self.cursor.executescript("""
+            CREATE TABLE volumes(
+                id INTEGER PRIMARY KEY,
+                comicvine_id INTEGER NOT NULL,
+                title, alt_title, year, publisher, volume_number,
+                description, site_url, special_version,
+                special_version_locked DEFAULT 0,
+                monitor_new_issues DEFAULT 1,
+                last_cv_fetch DEFAULT 0
+            );
+            CREATE TABLE volumes_covers(volume_id, cover);
+            CREATE TABLE issues(
+                id INTEGER PRIMARY KEY,
+                volume_id INTEGER NOT NULL,
+                comicvine_id INTEGER NOT NULL UNIQUE,
+                issue_number, calculated_issue_number, title, date,
+                store_date, description, monitored
+            );
+        """)
+        self.addCleanup(self.connection.close)
+
+    def _refresh(self, volume_datas, issue_datas):
+        """Refresh all volumes in the database, with the metadata source
+        giving the supplied volumes and issues."""
+        self.cursor.executemany(
+            'INSERT INTO volumes(id, comicvine_id, last_cv_fetch) '
+            'VALUES (?, ?, ?);',
+            (
+                (vd['comicvine_id'] // 10, vd['comicvine_id'], self.OLD_FETCH)
+                for vd in volume_datas
+            )
+        )
+        metadata_source = MagicMock()
+        metadata_source.fetch_volumes = AsyncMock(return_value=[
+            {
+                'title': 'Title', 'aliases': [], 'year': 2026,
+                'publisher': 'DC Comics', 'volume_number': 1,
+                'description': '', 'site_url': '', 'cover': None,
+                **vd
+            }
+            for vd in volume_datas
+        ])
+        metadata_source.fetch_issues = AsyncMock(return_value=[
+            {
+                'issue_number': '1', 'calculated_issue_number': 1.0,
+                'title': None, 'date': None, 'description': '',
+                **isd
+            }
+            for isd in issue_datas
+        ])
+        module = 'backend.implementations.volumes.'
+        with patch(
+            module + 'get_db', return_value=self.cursor
+        ), patch(
+            module + 'ComicVine', return_value=metadata_source
+        ), patch(
+            module + 'Settings'
+        ) as settings, patch(
+            module + '_get_activity_counts', return_value=(0, 0)
+        ), patch(
+            module + 'determine_special_version', return_value=None
+        ), patch(
+            module + 'commit'
+        ), patch(
+            module + 'PortablePool'
+        ), patch(
+            module + 'FilesDB'
+        ):
+            settings.return_value.sv.refresh_skip_window = 24
+            refresh_and_scan(
+                volume_ids=[vd['comicvine_id'] // 10 for vd in volume_datas],
+                allow_skipping=False
+            )
+
+        return dict(self.cursor.execute(
+            'SELECT id, last_cv_fetch > ? FROM volumes;',
+            (self.OLD_FETCH,)
+        ).fetchall())
+
+    def test_volume_without_fetched_issues_is_not_marked_as_refreshed(self):
+        # The rate limit was reached before the issues of volume 2 were fetched
+        marked_as_refreshed = self._refresh(
+            volume_datas=[
+                {'comicvine_id': 10, 'issue_count': 1},
+                {'comicvine_id': 20, 'issue_count': 3},
+                {'comicvine_id': 30, 'issue_count': 0}
+            ],
+            issue_datas=[
+                {'comicvine_id': 101, 'volume_id': 10}
+            ]
+        )
+
+        self.assertEqual(marked_as_refreshed, {1: 1, 2: 0, 3: 1})
+        self.assertEqual(
+            self.cursor.execute('SELECT COUNT(*) FROM issues;').fetchone()[0],
+            1
         )
 
 

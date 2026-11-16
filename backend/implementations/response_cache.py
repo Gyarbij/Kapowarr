@@ -4,7 +4,7 @@ from asyncio import get_running_loop
 from json import dumps, loads
 from threading import Lock
 from time import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Union
 
 from backend.base.logging import LOGGER
 from backend.internals.db import get_db
@@ -54,6 +54,30 @@ class ResponseCache:
                 {expiry_clause};
         """, params).fetchone()
         return loads(row[0]) if row else None
+
+    def get_fetch_time(
+        self,
+        resource: str,
+        cache_key: str
+    ) -> Union[int, None]:
+        """Get the time at which a cached response was fetched.
+
+        Args:
+            resource (str): The resource of the response.
+            cache_key (str): The key of the response.
+
+        Returns:
+            Union[int, None]: The epoch time, or `None` if the response is not
+                cached.
+        """
+        row = self._db_getter().execute("""
+            SELECT fetched_at
+            FROM metadata_response_cache
+            WHERE metadata_source = ?
+                AND resource = ?
+                AND cache_key = ?;
+        """, (self.source_key, resource, cache_key)).fetchone()
+        return row[0] if row else None
 
     def _store_response(
         self,

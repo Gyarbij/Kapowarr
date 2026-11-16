@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from flask import Flask
 
+from backend.implementations.metadata_sources.base import MetadataSourceType
 from frontend import api
 
 
@@ -10,9 +11,16 @@ class MetadataApiTest(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__)
         self.source = MagicMock()
+        self.source.source_type = MetadataSourceType.COMICVINE
         self.cache = MagicMock()
         self.settings = MagicMock()
         self.settings.sv.api_key = 'test-key'
+        self.task_handler = MagicMock()
+        task_handler_patch = patch.object(
+            api, 'TaskHandler', return_value=self.task_handler
+        )
+        task_handler_patch.start()
+        self.addCleanup(task_handler_patch.stop)
 
     def _patches(self):
         return (
@@ -90,6 +98,70 @@ class MetadataApiTest(unittest.TestCase):
 
         self.assertEqual(status, 400)
         self.assertEqual(response['error'], 'InvalidKeyValue')
+
+    def _get_releases(self):
+        self.cache.get_releases = AsyncMock(return_value=[{'issue_cv_id': 1}])
+        settings_patch, source_patch, cache_patch, timer_patch = \
+            self._patches()
+
+        with self.app.test_request_context(
+            '/api/releases/recent',
+            query_string={'api_key': 'test-key'}
+        ), settings_patch, source_patch, cache_patch, timer_patch:
+            return api.api_releases_recent()
+
+    def test_serving_releases_updates_volumes_with_new_releases(self):
+        _response, status = self._get_releases()
+
+        self.assertEqual(status, 200)
+        self.task_handler.update_new_releases.assert_called_once()
+
+    def test_failing_library_update_does_not_fail_serving_releases(self):
+        self.task_handler.update_new_releases.side_effect = RuntimeError
+
+        with self.assertLogs('Kapowarr', level='ERROR'):
+            response, status = self._get_releases()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response['result'], [{'issue_cv_id': 1}])
+
+    def _get_publisher_volumes(self):
+        volumes = [{'already_added': 4, 'issue_count': 12}]
+        self.cache.get_publisher_volumes = AsyncMock(return_value=volumes)
+        self.cache.get_fetch_time.return_value = 1234
+        settings_patch, source_patch, cache_patch, timer_patch = \
+            self._patches()
+        find_changed_patch = patch.object(
+            api, 'find_changed_publisher_volumes', return_value={4}
+        )
+
+        with self.app.test_request_context(
+            '/api/publishers/31/volumes',
+            query_string={'api_key': 'test-key'}
+        ), settings_patch, source_patch, cache_patch, timer_patch, \
+                find_changed_patch as find_changed:
+            _response, status = api.api_publisher_volumes(31)
+
+        self.assertEqual(status, 200)
+        return volumes, find_changed
+
+    def test_publisher_volumes_update_volumes_with_changed_issue_count(self):
+        volumes, find_changed = self._get_publisher_volumes()
+
+        find_changed.assert_called_once_with(volumes, 1234)
+        self.cache.get_fetch_time.assert_called_once_with(
+            'publisher_volumes', '31'
+        )
+        self.task_handler.update_new_releases.assert_called_once_with({4})
+
+    def test_publisher_volumes_of_other_source_are_not_compared(self):
+        # Its IDs don't refer to the volumes in the library
+        self.source.source_type = MetadataSourceType.METRON
+
+        _volumes, find_changed = self._get_publisher_volumes()
+
+        find_changed.assert_not_called()
+        self.task_handler.update_new_releases.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -334,9 +334,10 @@ function updateWeeklyURL() {
 	history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
 }
 
-function fetchWeeklyPacks(apiKey, forceRefresh=false) {
+function fetchWeeklyPacks(apiKey, forceRefresh=false, quiet=false) {
 	const requestId = ++WeeklyState.request;
-	setWeeklyState(WeeklyEls.loading);
+	if (!quiet)
+		setWeeklyState(WeeklyEls.loading);
 	WeeklyEls.message.innerText = '';
 	const params = {
 		weeks: WeeklyEls.range.value,
@@ -406,6 +407,16 @@ usingApiKey().then(apiKey => {
 	WeeklyState.apiKey = apiKey;
 	applyWeeklyURLParams();
 	fetchWeeklyPacks(apiKey);
+
+	// Volumes with an issue in the packs that their metadata doesn't have yet
+	// are updated in the background. Show the outcome once that is done.
+	socketReady.then(activeSocket => {
+		if (!activeSocket) return;
+		activeSocket.on('task_ended', data => {
+			if (data.action === 'update_new_releases' && !data.cancelled)
+				fetchWeeklyPacks(apiKey, false, true);
+		});
+	});
 
 	WeeklyEls.refresh.onclick = () => fetchWeeklyPacks(apiKey, true);
 	WeeklyEls.expand.onclick = () => setAllWeeksOpen(true);

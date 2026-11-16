@@ -8,6 +8,22 @@ The received volume metadata is saved and the reported count of issues in each v
 
 Fetching the metadata of all volumes is relatively quick, taking between 3 and 4 minutes for 20.000 volumes (100 volumes per second). It's the fetching of all issues that can take a very long time. This is why the system that compares the issue counts to most likely skip fetching the issues is in place.
 
+A volume only counts as updated when the issues that had to be fetched for it, were actually fetched. If the ComicVine rate limit is hit before that, the volume is picked up again in the next run instead of 24 hours later.
+
+## New releases
+
+With Update All alone, it can take a day before a new issue shows up in a volume, and a changed store date of an issue that is already known is only noticed when the monthly fetch of the issues comes around. To avoid that, Kapowarr uses the release data that it already has to find the volumes in the library that are behind, and refreshes just those right away. A volume is behind when:
+
+- The releases from ComicVine (used for the Releases page) include an issue of the volume that is not in the library yet, or that has a different store date in the library.
+- A supplemental source announced an issue of the volume that its metadata doesn't have yet ('Metadata Pending'). The volume is refreshed directly, and again later if ComicVine doesn't list the issue yet. It starts with six hours in between and that grows as the announcement gets older. After 30 days, the volume is left to Update All.
+- The volume list of a publisher reports a different amount of issues for the volume than the library has.
+
+The Refresh Releases and Refresh Release Discovery tasks do this every time they run. Opening the Releases or Weekly Packs page, or the volumes of a publisher, does it too: the page is shown first and an Update New Releases task refreshes the volumes in the background. When the task is done, Weekly Packs and the library and discovery views of the calendar update themselves. A refresh that changes the issues of a volume shows up in its history.
+
+Only volumes for which there is something new are refreshed, and release data is only acted on when it is newer than the last refresh of the volume. So a volume is not refreshed over and over again for the same release. If a refresh could not be done, for example because the rate limit was hit, then opening a page doesn't start another one for that volume for an hour. The release tasks do try again.
+
+Volumes in the library are tied to ComicVine. When Metron is the metadata source, its releases and publisher listings can't be linked to volumes in the library, so only the announcements of supplemental sources lead to a refresh.
+
 ## Special Version and annuals
 
 - **Normal Volume**  

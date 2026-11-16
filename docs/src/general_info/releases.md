@@ -22,9 +22,11 @@ calendar, DC's catalog, Lunar's dated release data, and GetComics Weekly Packs
 are supplemental sources; ComicVine or Metron remains canonical.
 
 'Metadata Pending' means one exact local volume was found, but the announced
-issue is not yet in its canonical metadata. Kapowarr keeps a lightweight watch
-and checks again after metadata refreshes. It does not create a provisional
-issue. Ambiguous, unmonitored, and unknown items remain review-only.
+issue is not yet in its canonical metadata. Kapowarr refreshes that volume
+right away, and again later if the metadata source doesn't list the issue yet.
+When Refresh Release Discovery brings the issue in, it's searched for in the
+same run if it's monitored. Kapowarr does not create a provisional issue.
+Ambiguous, unmonitored, and unknown items remain review-only.
 
 Each supplemental provider fails independently. Previously cached records from
 other providers remain available if one source is blocked or temporarily
@@ -76,3 +78,15 @@ Manually selecting Update All refreshes every applicable volume. The automatic
 scheduled Update All may skip volumes that were refreshed recently. Search
 Missing searches monitored gaps using the latest stored metadata. Refresh &
 Search Missing refreshes the same filtered volume snapshot first.
+
+## Keeping Volumes Up To Date
+
+Volumes in the library that are behind on a release don't wait for Update All.
+When the release data shows a new issue, a changed store date, or an announced
+issue that a volume doesn't have yet, that volume is refreshed right away. This
+happens when the release tasks run and when the Releases or Weekly Packs page,
+or the volumes of a publisher, are opened. In the latter case an Update New
+Releases task does it in the background, after which Weekly Packs and the
+library and discovery views of the calendar update themselves. See
+[the implementation details](implementation_details.md#new-releases) for how
+volumes are selected.

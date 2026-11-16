@@ -674,6 +674,8 @@ CREATE TABLE IF NOT EXISTS pending_release_watches(
 DB_SCHEMA_INDEXES = """
 CREATE INDEX IF NOT EXISTS volumes_created_at_index
     ON volumes(created_at);
+CREATE INDEX IF NOT EXISTS volumes_comicvine_id_index
+    ON volumes(comicvine_id);
 CREATE INDEX IF NOT EXISTS release_cache_source_date_index
     ON release_cache(metadata_source, store_date, cover_date);
 CREATE INDEX IF NOT EXISTS release_cache_windows_expiry_index

@@ -417,18 +417,20 @@ function validateCustomRange() {
 }
 
 // Fetch releases from API
-function fetchReleases(api_key, forceRefresh=false) {
+function fetchReleases(api_key, forceRefresh=false, quiet=false) {
 	const selectedRange = daysSelect.value;
 	if (selectedRange === 'custom') {
 		ensureCustomRange();
 		if (!validateCustomRange()) return Promise.resolve();
 	}
 	const requestId = ++releaseRequestId;
-	loadingIndicator.classList.remove('hidden');
-	emptyState.classList.add('hidden');
-	releasesGrid.innerHTML = '';
-	loadMoreButton.classList.add('hidden');
-	refreshButton.disabled = true;
+	if (!quiet) {
+		loadingIndicator.classList.remove('hidden');
+		emptyState.classList.add('hidden');
+		releasesGrid.innerHTML = '';
+		loadMoreButton.classList.add('hidden');
+		refreshButton.disabled = true;
+	}
 
 	const releaseType = releaseTypeSelect.value;
 
@@ -485,7 +487,8 @@ function fetchReleases(api_key, forceRefresh=false) {
 					volume_id: release.local_volume_id
 				}))
 				: data.result;
-			visibleReleaseCount = 100;
+			if (!quiet)
+				visibleReleaseCount = 100;
 			renderReleases(allReleases);
 		} else {
 			throw new Error(data.error || 'Failed to fetch releases');
@@ -494,6 +497,7 @@ function fetchReleases(api_key, forceRefresh=false) {
 	.catch(error => {
 		if (requestId !== releaseRequestId) return;
 		console.error('Error fetching releases:', error);
+		if (quiet) return;
 		loadingIndicator.classList.add('hidden');
 		emptyState.classList.remove('hidden');
 		emptyState.querySelector('p').textContent = `Error: ${error.message || 'Failed to fetch releases'}`;
@@ -620,4 +624,18 @@ usingApiKey()
 	// Initial load
 	updateDaysLabel();
 	fetchReleases(api_key);
+
+	// Volumes that are behind on the releases are updated in the background.
+	// The views that show data from the library change because of that.
+	socketReady.then(activeSocket => {
+		if (!activeSocket) return;
+		activeSocket.on('task_ended', data => {
+			if (
+				data.action === 'update_new_releases'
+				&& !data.cancelled
+				&& ['library', 'discovery'].includes(releaseTypeSelect.value)
+			)
+				fetchReleases(api_key, false, true);
+		});
+	});
 });

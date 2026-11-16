@@ -3,7 +3,7 @@
 from asyncio import run
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Any, Dict, List, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterable, List, Tuple, Type, Union
 from urllib.parse import urlparse
 
 from flask import Blueprint, request, send_file
@@ -60,11 +60,16 @@ from backend.implementations.credentials import Credentials
 from backend.implementations.external_clients import ExternalClients
 from backend.implementations.file_matching import get_file_matching, set_file_matching
 from backend.implementations.metadata_cache import MetadataCache
+from backend.implementations.metadata_sources.base import MetadataSourceType
 from backend.implementations.naming import (
     generate_volume_folder_name,
     preview_mass_rename,
 )
 from backend.implementations.release_discovery import get_release_discovery
+from backend.implementations.release_refresh import (
+    find_changed_publisher_volumes,
+    find_pending_weekly_pack_volumes,
+)
 from backend.implementations.remote_mapping import RemoteMappings
 from backend.implementations.root_folders import RootFolders
 from backend.implementations.volumes import Library, delete_issue_file
@@ -1249,6 +1254,28 @@ def _validate_release_range(start_date: str, end_date: str) -> None:
         raise InvalidKeyValue('date_range', f'{start_date}|{end_date}')
 
 
+def _update_new_releases(
+    find_volume_ids: Callable[[], Iterable[int]] = tuple
+) -> None:
+    """Have the volumes in the library that are behind on the release data
+    that is being served be refreshed in the background. Serving the release
+    data comes first, so a failure here never fails the request.
+
+    Args:
+        find_volume_ids (Callable[[], Iterable[int]], optional): Gives the IDs
+            of volumes that are known to be behind, on top of the volumes for
+            which the stored release data has something new.
+            Defaults to tuple.
+    """
+    try:
+        TaskHandler().update_new_releases(find_volume_ids())
+
+    except Exception:
+        LOGGER.exception('Failed to update volumes with new releases: ')
+
+    return
+
+
 def _filter_discovery_items(items: List[dict]) -> List[dict]:
     publisher = (request.values.get('publisher') or '').strip().lower()
     local_status = (request.values.get('local_status') or '').strip()
@@ -1311,6 +1338,7 @@ def api_release_discovery():
         end_date,
         force_refresh=_force_metadata_refresh()
     ))
+    _update_new_releases()
     items = _filter_discovery_items(items)
     page = _metadata_int_param('page', 1, 10000)
     per_page = _metadata_int_param('per_page', 100, 500)
@@ -1365,6 +1393,7 @@ def api_weekly_packs():
         weeks,
         force_refresh=_force_metadata_refresh()
     ))
+    _update_new_releases(lambda: find_pending_weekly_pack_volumes(packs))
     publisher = (request.values.get('publisher') or '').strip().lower()
     local_status = (request.values.get('local_status') or '').strip()
     text_query = (request.values.get('query') or '').strip().lower()
@@ -1435,6 +1464,7 @@ def api_releases_new():
         limit=limit,
         force_refresh=_force_metadata_refresh()
     ))
+    _update_new_releases()
     return return_api(releases)
 
 
@@ -1456,6 +1486,7 @@ def api_releases_upcoming():
         limit=_metadata_int_param('limit', 5000),
         force_refresh=_force_metadata_refresh()
     ))
+    _update_new_releases()
     return return_api(releases)
 
 
@@ -1477,6 +1508,7 @@ def api_releases_recent():
         limit=_metadata_int_param('limit', 5000),
         force_refresh=_force_metadata_refresh()
     ))
+    _update_new_releases()
     return return_api(releases)
 
 
@@ -1572,11 +1604,18 @@ def api_publisher_volumes(publisher_id: int):
     """
     limit = _metadata_int_param('limit', 100, 1000)
     source = _get_configured_metadata_source()
-    volumes = run(MetadataCache(source).get_publisher_volumes(
+    cache = MetadataCache(source)
+    volumes = run(cache.get_publisher_volumes(
         publisher_id=publisher_id,
         limit=limit,
         force_refresh=_force_metadata_refresh()
     ))
+    if source.source_type is MetadataSourceType.COMICVINE:
+        # Only the IDs of ComicVine can be linked to volumes in the library
+        _update_new_releases(lambda: find_changed_publisher_volumes(
+            volumes,
+            cache.get_fetch_time('publisher_volumes', str(publisher_id))
+        ))
     return return_api(volumes)
 
 

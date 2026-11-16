@@ -72,6 +72,35 @@ class WeeklyPacksApiTest(unittest.TestCase):
         self.assertEqual(response['error'], 'InvalidKeyValue')
         queue.assert_not_awaited()
 
+    def test_viewing_packs_updates_volumes_with_pending_metadata(self):
+        packs = [{
+            'week_date': '2026-11-11',
+            'archives': [],
+            'items': [{
+                'series_title': 'Lobo',
+                'local_status': 'metadata_pending',
+                'local_volume_id': 3
+            }]
+        }]
+        settings_patch, timer_patch, _queue_patch = self._patches()
+        task_handler = MagicMock()
+
+        with self.app.test_request_context(
+            '/api/weekly-packs?api_key=test-key'
+        ), settings_patch, timer_patch, patch.object(
+            api, 'get_enriched_weekly_packs', AsyncMock(return_value=packs)
+        ), patch.object(
+            api, 'find_pending_weekly_pack_volumes', return_value={3}
+        ) as find_pending, patch.object(
+            api, 'TaskHandler', return_value=task_handler
+        ):
+            response, status = api.api_weekly_packs()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response['result']['total_items'], 1)
+        find_pending.assert_called_once_with(packs)
+        task_handler.update_new_releases.assert_called_once_with({3})
+
 
 if __name__ == '__main__':
     unittest.main()

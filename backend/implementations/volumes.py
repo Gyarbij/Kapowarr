@@ -2235,6 +2235,23 @@ def refresh_and_scan(
     ))
     if should_stop():
         return
+
+    # The issues of a volume are not guaranteed to be fetched because of rate
+    # limits. Such a volume is not up to date, so don't let it count as fetched.
+    volumes_with_fetched_issues = {isd["volume_id"] for isd in issue_datas}
+    cursor.executemany(
+        "UPDATE volumes SET last_cv_fetch = ? WHERE id = ?;",
+        (
+            (previous_fetch, local_id)
+            for local_id, previous_fetch in (
+                cv_to_id_fetch[vd["comicvine_id"]]
+                for vd in filtered_volume_datas
+                if vd["issue_count"]
+                and vd["comicvine_id"] not in volumes_with_fetched_issues
+            )
+        )
+    )
+
     monitor_issues_volume_ids: Set[int] = set(first_of_subarrays(cursor.execute(
         "SELECT id FROM volumes WHERE monitor_new_issues = 1;"
     )))
