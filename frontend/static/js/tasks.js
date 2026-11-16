@@ -15,8 +15,18 @@ const TaskEls = {
 // Task planning
 //
 function convertInterval(interval) {
-	result = Math.round(interval / 3600); // seconds -> hours
-	return `${result} hours`;
+	if (interval <= 0) return 'Disabled';
+	const result = Math.round(interval / 3600); // seconds -> hours
+	return `Every ${result} hours`;
+};
+
+function convertSchedule(task) {
+	if (task.schedule_type === 'disabled' || task.interval <= 0) return 'Disabled';
+	if (task.schedule_type === 'daily') return `Daily at ${task.time_of_day}`;
+	if (task.schedule_type === 'weekly') {
+		return `Weekly on ${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][task.weekday]} at ${task.time_of_day}`;
+	}
+	return convertInterval(task.interval);
 };
 
 function convertTime(epoch, future) {
@@ -36,11 +46,12 @@ function fillPlanning(api_key) {
 
 			entry.querySelector('.name-column').innerText = task.display_name;
 			entry.querySelector('.interval-column').innerText =
-				convertInterval(task.interval);
+				convertSchedule(task);
 			entry.querySelector('.prev-column').innerText =
 				convertTime(task.last_run, false);
-			entry.querySelector('.next-column').innerText =
-				convertTime(task.next_run, true);
+			entry.querySelector('.next-column').innerText = task.interval > 0
+				? convertTime(task.next_run, true)
+				: 'Disabled';
 			entry.querySelector('button').onclick =
 				e => sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': task.task_name})
 

@@ -64,8 +64,11 @@ def _main(
     """
     from backend.base.custom_exceptions import InvalidKeyValue
     from backend.base.definitions import ProxyType
-    from backend.base.helpers import (apply_proxy, build_proxy_url,
-                                      check_min_python_version)
+    from backend.base.helpers import (
+        apply_proxy,
+        build_proxy_url,
+        check_min_python_version,
+    )
     from backend.base.logging import LOGGER, setup_logging
     from backend.features.download_queue import DownloadHandler
     from backend.features.tasks import TaskHandler
@@ -129,6 +132,7 @@ def _main(
         download_handler = DownloadHandler()
         download_handler.load_downloads()
         task_handler = TaskHandler()
+        task_handler.queue_startup_tasks(start_type)
         task_handler.handle_intervals()
 
     restart_type = None

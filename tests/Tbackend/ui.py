@@ -28,6 +28,14 @@ class ReleasesRouteTest(unittest.TestCase):
         self.assertEqual(response.get_data(as_text=True), 'calendar')
         render.assert_called_once_with('releases.html')
 
+    def test_task_settings_route_renders_task_settings(self):
+        with patch('frontend.ui.render', return_value='task-settings') as render:
+            response = self.app.test_client().get('/settings/tasks')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_data(as_text=True), 'task-settings')
+        render.assert_called_once_with('settings_tasks.html')
+
     def test_legacy_weekly_route_redirects_with_safe_filters(self):
         with patch.object(Server, 'url_base', '/kapowarr'):
             response = self.app.test_client().get(

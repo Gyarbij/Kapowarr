@@ -1,9 +1,11 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from flask import Flask
 
 from backend.base.custom_exceptions import CredentialInvalid, InvalidComicVineApiKey
+from backend.base.definitions import StartType
 from backend.features.tasks import (
     RefreshReleaseCache,
     RefreshReleaseDiscovery,
@@ -15,6 +17,15 @@ from frontend import api
 
 
 class TaskFlowTest(unittest.TestCase):
+    @staticmethod
+    def _handler():
+        handler = object.__new__(TaskHandler)
+        handler.context = Flask('task-handler').app_context
+        handler.stopping = False
+        handler.task_interval_waiter = None
+        handler.startup_task_waiter = None
+        return handler
+
     @patch('backend.features.tasks.WebSocket')
     @patch('backend.features.tasks.Settings')
     def test_release_cache_refresh_skips_missing_credentials(
@@ -292,6 +303,135 @@ class TaskFlowTest(unittest.TestCase):
             3643,
             306
         )])
+
+    def test_disabled_intervals_do_not_arm_timer(self):
+        handler = self._handler()
+        cursor = MagicMock()
+        cursor.execute.return_value.fetchone.return_value = (None,)
+
+        with patch(
+            'backend.features.tasks.get_db',
+            return_value=cursor
+        ), patch('backend.features.tasks.Timer') as timer:
+            handler.handle_intervals()
+
+        timer.assert_not_called()
+        self.assertIsNone(handler.task_interval_waiter)
+
+    def test_interval_check_skips_disabled_tasks_and_uses_skip_setting(self):
+        handler = self._handler()
+        handler.add = MagicMock()
+        handler.handle_intervals = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.return_value.fetchall.return_value = [{
+            'task_name': 'update_all',
+            'interval': 0,
+            'next_run': 0
+        }, {
+            'task_name': 'update_all',
+            'interval': 3600,
+            'next_run': 0
+        }]
+        settings = MagicMock()
+        settings.return_value.sv.scheduled_update_skip_recent = False
+
+        with patch(
+            'backend.features.tasks.get_db',
+            return_value=cursor
+        ), patch('backend.features.tasks.Settings', settings), patch(
+            'backend.features.tasks.time',
+            return_value=100
+        ):
+            handler._TaskHandler__check_intervals()
+
+        handler.add.assert_called_once()
+        self.assertFalse(handler.add.call_args.args[0].allow_skipping)
+        handler.handle_intervals.assert_called_once_with()
+
+    def test_startup_tasks_are_queued_in_order(self):
+        handler = self._handler()
+        handler.add = MagicMock()
+        settings = SimpleNamespace(
+            update_all_on_startup=True,
+            search_all_on_startup=True,
+            refresh_releases_on_startup=True,
+            scheduled_update_skip_recent=False,
+            startup_task_delay=0
+        )
+        cursor = MagicMock()
+
+        with patch(
+            'backend.features.tasks.Settings',
+            return_value=SimpleNamespace(sv=settings)
+        ), patch(
+            'backend.features.tasks.get_task_intervals',
+            return_value={
+                'update_all': 3600,
+                'search_all': 86_400,
+                'refresh_release_cache': 3600,
+                'refresh_release_discovery': 3600
+            }
+        ), patch(
+            'backend.features.tasks.get_db',
+            return_value=cursor
+        ), patch('backend.features.tasks.commit'), patch(
+            'backend.features.tasks.time',
+            return_value=100
+        ):
+            handler.queue_startup_tasks(StartType.STARTUP)
+
+        self.assertEqual(
+            [type(call.args[0]) for call in handler.add.call_args_list],
+            [UpdateAll, SearchAll, RefreshReleaseCache, RefreshReleaseDiscovery]
+        )
+        self.assertFalse(handler.add.call_args_list[0].args[0].allow_skipping)
+
+    def test_startup_tasks_do_not_run_for_self_restart(self):
+        handler = self._handler()
+        handler.add = MagicMock()
+
+        with patch('backend.features.tasks.Settings') as settings:
+            handler.queue_startup_tasks(StartType.RESTART)
+
+        settings.assert_not_called()
+        handler.add.assert_not_called()
+
+    def test_startup_task_delay_uses_timer(self):
+        handler = self._handler()
+        settings = SimpleNamespace(
+            update_all_on_startup=True,
+            search_all_on_startup=False,
+            refresh_releases_on_startup=False,
+            scheduled_update_skip_recent=True,
+            startup_task_delay=30
+        )
+
+        with patch(
+            'backend.features.tasks.Settings',
+            return_value=SimpleNamespace(sv=settings)
+        ), patch(
+            'backend.features.tasks.get_task_intervals',
+            return_value={'update_all': 3600}
+        ), patch('backend.features.tasks.get_db'), patch(
+            'backend.features.tasks.commit'
+        ), patch('backend.features.tasks.Timer') as timer:
+            handler.queue_startup_tasks(StartType.STARTUP)
+
+        timer.assert_called_once()
+        timer.return_value.start.assert_called_once_with()
+
+    def test_stop_handle_cancels_startup_timer(self):
+        handler = self._handler()
+        interval_timer = MagicMock()
+        startup_timer = MagicMock()
+        handler.task_interval_waiter = interval_timer
+        handler.startup_task_waiter = startup_timer
+        TaskHandler.queue = []
+
+        handler.stop_handle()
+
+        interval_timer.cancel.assert_called_once_with()
+        startup_timer.cancel.assert_called_once_with()
 
 
 if __name__ == '__main__':

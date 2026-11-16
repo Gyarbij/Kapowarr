@@ -1468,3 +1468,48 @@ def _migrate_unify_activity_history():
         DROP TABLE download_history;
     """)
     return
+
+
+@DatabaseMigrationHandler.register_handler(50)
+def _migrate_add_task_schedule_columns():
+    """Persist calendar recurrence metadata for scheduled tasks."""
+    cursor = get_db()
+    columns = {
+        column[1]
+        for column in cursor.execute("PRAGMA table_info(task_intervals);")
+    }
+    additions = (
+        ("schedule_type", "TEXT NOT NULL DEFAULT 'interval'"),
+        ("weekday", "INTEGER NOT NULL DEFAULT 0"),
+        ("time_of_day", "TEXT NOT NULL DEFAULT '03:00'"),
+    )
+    for name, definition in additions:
+        if name not in columns:
+            cursor.execute(
+                f"ALTER TABLE task_intervals ADD COLUMN {name} {definition};"
+            )
+    return
+
+
+@DatabaseMigrationHandler.register_handler(51)
+def _migrate_add_volume_search_matches():
+    """Persist one reversible search identity override per volume."""
+    get_db().execute("""
+        CREATE TABLE IF NOT EXISTS volume_search_matches(
+            volume_id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL CHECK (source IN ('comicvine', 'getcomics')),
+            source_id TEXT,
+            title TEXT NOT NULL,
+            aliases TEXT NOT NULL DEFAULT '[]',
+            year INTEGER,
+            volume_number INTEGER,
+            comicvine_id INTEGER,
+            release_link TEXT,
+            display_title TEXT NOT NULL,
+            matched_at INTEGER NOT NULL,
+
+            FOREIGN KEY (volume_id) REFERENCES volumes(id)
+                ON DELETE CASCADE
+        );
+    """)
+    return

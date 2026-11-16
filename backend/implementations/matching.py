@@ -7,9 +7,10 @@ issues and volumes.
 
 from __future__ import annotations
 
+import re
+from copy import copy
 from itertools import chain
 from math import floor
-from re import compile
 from typing import TYPE_CHECKING, Dict, List, Mapping, Tuple, Union
 
 from backend.base.definitions import (
@@ -17,6 +18,7 @@ from backend.base.definitions import (
     SearchResultMatchReason,
     SpecialVersion,
     VolumeMetadata,
+    VolumeSearchMatch,
 )
 from backend.base.file_extraction import special_version_regex
 from backend.base.helpers import force_range, normalise_query_string
@@ -30,9 +32,18 @@ if TYPE_CHECKING:
         VolumeData,
     )
 
-clean_title_regex = compile(
+clean_title_regex = re.compile(
     r'((?<=annual)s|/|\-|–|\+|,|\.|\!|:|\bthe\s|\band\b|&|’|\'|\"|\bone[\-\s]?shot\b|\bhard[\-\s]?cover\b|\bomnibus\b|\btpb\b)'
 )
+possessive_title_regex = re.compile(r"['’]s\b")
+generic_title_descriptor_regex = re.compile(r'\b(comics?|magazines?)\b')
+
+
+def _clean_match_title(title: str) -> str:
+    title = normalise_query_string(title).lower()
+    title = possessive_title_regex.sub('', title)
+    title = generic_title_descriptor_regex.sub('', title)
+    return clean_title_regex.sub('', title).replace(' ', '')
 
 
 def match_title(
@@ -52,15 +63,8 @@ def match_title(
     Returns:
         bool: Whether the titles match.
     """
-    clean_reference_title = clean_title_regex.sub(
-        '',
-        normalise_query_string(title1).lower()
-    ).replace(' ', '')
-
-    clean_title = clean_title_regex.sub(
-        '',
-        normalise_query_string(title2).lower()
-    ).replace(' ', '')
+    clean_reference_title = _clean_match_title(title1)
+    clean_title = _clean_match_title(title2)
 
     if allow_contains:
         return clean_title in clean_reference_title
@@ -446,7 +450,8 @@ def check_search_result_match(
     volume_data: VolumeData,
     volume_issues: List[IssueData],
     number_to_year: Mapping[float, Union[int, None]],
-    calculated_issue_number: Union[float, None] = None
+    calculated_issue_number: Union[float, None] = None,
+    search_match: Union[VolumeSearchMatch, None] = None
 ) -> SearchResultMatchData:
     """Filter for whether a search result matches with what is searched for.
 
@@ -480,6 +485,12 @@ def check_search_result_match(
         }
 
     annual = 'annual' in volume_data.title.lower()
+    matching_volume_data = copy(volume_data)
+    if search_match:
+        if search_match['year'] is not None:
+            matching_volume_data.year = search_match['year']
+        if search_match['volume_number'] is not None:
+            matching_volume_data.volume_number = search_match['volume_number']
 
     if blocklist_contains(result['link']):
         return decision(
@@ -493,17 +504,17 @@ def check_search_result_match(
             'Annual conflict'
         )
 
-    if not (
-        match_title(volume_data.title, result['series'])
-        or match_title(volume_data.alt_title or '', result['series'])
-    ):
+    search_titles = [volume_data.title, volume_data.alt_title or '']
+    if search_match:
+        search_titles.extend([search_match['title'], *search_match['aliases']])
+    if not any(match_title(title, result['series']) for title in search_titles):
         return decision(
             SearchResultMatchReason.TITLE_MISMATCH,
             "Titles don't match"
         )
 
     if not match_volume_number(
-        volume_data,
+        matching_volume_data,
         volume_issues,
         result['volume_number'],
         conservative=True
@@ -584,8 +595,11 @@ def check_search_result_match(
             for year in number_to_year.values()
             if year is not None
         ]
-        reference_year = volume_data.year
-        end_year = max(known_years) if known_years else volume_data.year
+        reference_year = matching_volume_data.year
+        end_year = (
+            max(known_years)
+            if known_years else matching_volume_data.year
+        )
 
     if not match_year(
         reference_year,

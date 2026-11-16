@@ -6,10 +6,12 @@ from backend.base.definitions import (
     SearchResultData,
     SpecialVersion,
     VolumeData,
+    VolumeSearchMatch,
 )
 from backend.implementations.matching import (
     check_search_result_match,
     file_importing_filter,
+    match_title,
 )
 
 
@@ -89,6 +91,33 @@ class SearchResultMatchingTest(unittest.TestCase):
         'backend.implementations.matching.blocklist_contains',
         return_value=None
     )
+    def test_search_match_alias_allows_override_identity(self, _blocklist):
+        search_match: VolumeSearchMatch = {
+            'volume_id': 1,
+            'source': 'comicvine',
+            'source_id': '4050-1',
+            'title': 'Lobo Archive',
+            'aliases': ['Lobo'],
+            'year': 2025,
+            'volume_number': 1,
+            'comicvine_id': 4050,
+            'release_link': 'https://comicvine.gamespot.com/lobo/',
+            'display_title': 'Lobo Archive',
+            'matched_at': 1
+        }
+        match = check_search_result_match(
+            self._result(series='Lobo Archive'),
+            self.volume,
+            self.issues,
+            self.number_to_year,
+            search_match=search_match
+        )
+        self.assertTrue(match['match'])
+
+    @patch(
+        'backend.implementations.matching.blocklist_contains',
+        return_value=None
+    )
     def test_unknown_canonical_issue_is_rejected(self, _blocklist):
         match = check_search_result_match(
             self._result(issue_number=6.0),
@@ -151,6 +180,16 @@ class SearchResultMatchingTest(unittest.TestCase):
             self.number_to_year,
             allow_special_version_mismatch=True
         ))
+
+    def test_publication_descriptors_and_possessives_match(self):
+        self.assertTrue(match_title(
+            "Archie's Double Digest Magazine",
+            'Archie Comics Double Digest'
+        ))
+
+    def test_pokemon_title_matching(self):
+        self.assertTrue(match_title('Pokemon – Classics', 'Pokémon Classics'))
+        self.assertFalse(match_title('Pokemon Classics', 'Pokemon Adventures'))
 
 
 if __name__ == '__main__':

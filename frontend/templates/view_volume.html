@@ -222,6 +222,28 @@
 	{% endset %}
 	{{ window(True, "manual-search-window", "Manual search", manual_search_content, '') }}
 
+	{% set series_match_content %}
+		<p id="series-match-active" class="hidden"></p>
+		<form id="series-match-form">
+			<label for="series-match-query">Search query</label>
+			<input id="series-match-query" type="text" maxlength="255">
+			<label for="series-match-source">Source</label>
+			<select id="series-match-source">
+				<option value="all">All</option>
+				<option value="comicvine">ComicVine</option>
+				<option value="getcomics">GetComics</option>
+			</select>
+			<button id="series-match-search" type="submit">Search</button>
+		</form>
+		<p id="series-match-searching" class="hidden">Searching...</p>
+		<table id="series-match-table" class="icon-text-color">
+			<thead><tr><th>Source</th><th>Title</th><th>Year</th><th>Volume</th><th>Link</th><th>Action</th></tr></thead>
+			<tbody></tbody>
+		</table>
+		<button id="series-match-clear" type="button" class="hidden">Clear Match</button>
+	{% endset %}
+	{{ window(True, "series-match-window", "Match Series", series_match_content, '') }}
+
 	{% set issue_info_content %}
 		<div id="issue-info-selectors">
 			<button id="issue-info-selector">Info</button>
@@ -405,6 +427,12 @@
 					"Start a manual search for all issues in the volume",
 					"manual_search.svg",
 					"Manual Search"
+				) }}
+				{{ icon_button(
+					"seriesmatch-button",
+					"Choose the search identity used for this series",
+					"search.svg",
+					"Match Series"
 				) }}
 				{{ icon_button(
 					"rename-button",

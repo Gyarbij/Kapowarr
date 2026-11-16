@@ -17,7 +17,6 @@ from sqlite3 import (
     register_converter,
 )
 from threading import RLock, current_thread, enumerate
-from time import time
 from typing import Any, Dict, Iterable, Iterator, List, Type, Union
 
 from flask import g
@@ -30,6 +29,7 @@ from backend.base.definitions import (
     SeedingHandling,
     SpecialVersion,
     T,
+    TaskSchedule,
 )
 from backend.base.files import create_folder, folder_path
 from backend.base.helpers import CommaList, current_thread_id
@@ -345,13 +345,14 @@ def setup_db_adapters_and_converters() -> None:
     register_adapter(SeedingHandling, lambda e: e.value)
     register_adapter(SpecialVersion, lambda e: e.value)
     register_adapter(DateType, lambda e: e.value)
+    register_adapter(TaskSchedule, lambda e: e.value)
     return
 
 
 def setup_db() -> None:
     """Setup the default config and database connection and tables"""
     from backend.internals.db_migration import DatabaseMigrationHandler
-    from backend.internals.settings import Settings, task_intervals
+    from backend.internals.settings import Settings, sync_task_intervals
 
     cursor = get_db()
     cursor.execute("PRAGMA journal_mode = wal;")
@@ -371,20 +372,7 @@ def setup_db() -> None:
     if not settings_values.api_key:
         settings.generate_api_key()
 
-    # Add task intervals
-    LOGGER.debug(f'Inserting task intervals: {task_intervals}')
-    current_time = round(time())
-    cursor.executemany(
-        """
-        INSERT INTO task_intervals
-        VALUES (?, ?, ?)
-        ON CONFLICT(task_name) DO
-        UPDATE
-        SET
-            interval = ?;
-        """,
-        ((k, v, current_time, v) for k, v in task_intervals.items())
-    )
+    sync_task_intervals()
 
     return
 
@@ -423,6 +411,22 @@ CREATE TABLE IF NOT EXISTS volumes(
 CREATE TABLE IF NOT EXISTS volumes_covers(
     volume_id INTEGER UNIQUE NOT NULL,
     cover BLOB,
+    FOREIGN KEY (volume_id) REFERENCES volumes(id)
+        ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS volume_search_matches(
+    volume_id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL CHECK (source IN ('comicvine', 'getcomics')),
+    source_id TEXT,
+    title TEXT NOT NULL,
+    aliases TEXT NOT NULL DEFAULT '[]',
+    year INTEGER,
+    volume_number INTEGER,
+    comicvine_id INTEGER,
+    release_link TEXT,
+    display_title TEXT NOT NULL,
+    matched_at INTEGER NOT NULL,
+
     FOREIGN KEY (volume_id) REFERENCES volumes(id)
         ON DELETE CASCADE
 );
@@ -554,7 +558,10 @@ CREATE TABLE IF NOT EXISTS task_history(
 CREATE TABLE IF NOT EXISTS task_intervals(
     task_name PRIMARY KEY,
     interval INTEGER NOT NULL,
-    next_run INTEGER NOT NULL
+    next_run INTEGER NOT NULL,
+    schedule_type TEXT NOT NULL DEFAULT 'interval',
+    weekday INTEGER NOT NULL DEFAULT 0,
+    time_of_day TEXT NOT NULL DEFAULT '03:00'
 );
 CREATE TABLE IF NOT EXISTS blocklist(
     id INTEGER PRIMARY KEY,

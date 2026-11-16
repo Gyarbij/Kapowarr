@@ -319,6 +319,15 @@ class StartType(BaseEnum):
     "A restart because changes to the hosting settings were made"
 
 
+class TaskSchedule(BaseEnum):
+    "The recurrence mode for a scheduled task"
+
+    INTERVAL = "interval"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    DISABLED = "disabled"
+
+
 class ProxyType(BaseEnum):
     NONE = None
     "Proxy disabled"
@@ -743,6 +752,32 @@ class VolumeMetadata(TypedDict):
     translated: bool
     already_added: Union[int, None]
     issues: Union[List[IssueMetadata], None]
+
+
+class VolumeSearchMatch(TypedDict):
+    volume_id: int
+    source: str
+    source_id: Union[str, None]
+    title: str
+    aliases: List[str]
+    year: Union[int, None]
+    volume_number: Union[int, None]
+    comicvine_id: Union[int, None]
+    release_link: Union[str, None]
+    display_title: str
+    matched_at: int
+
+
+class VolumeSearchCandidate(TypedDict):
+    source: str
+    source_id: Union[str, None]
+    title: str
+    aliases: List[str]
+    year: Union[int, None]
+    volume_number: Union[int, None]
+    comicvine_id: Union[int, None]
+    release_link: Union[str, None]
+    display_title: str
 
 
 class PublisherMetadata(TypedDict):

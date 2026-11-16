@@ -152,6 +152,11 @@ def ui_metadata():
     return render('settings_metadata.html')
 
 
+@ui.route('/settings/tasks', methods=methods)
+def ui_task_settings():
+    return render('settings_tasks.html')
+
+
 @ui.route('/settings/general', methods=methods)
 def ui_general():
     return render('settings_general.html')

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import unittest
 from types import SimpleNamespace
@@ -147,6 +148,39 @@ class ActivityMutationTest(unittest.TestCase):
         self.assertEqual(kwargs['details']['deleted_volume_id'], 7)
         self.assertEqual(kwargs['details']['issue_count'], 2)
         self.assertEqual(kwargs['details']['file_count'], 1)
+
+
+class VolumeSearchMatchTest(unittest.TestCase):
+    @patch('backend.implementations.volumes.get_db')
+    def test_search_match_serializes_and_replaces(self, get_db):
+        cursor = MagicMock()
+        get_db.return_value = cursor
+        volume = Volume(4)
+        match = volume.set_search_match({
+            'source': 'getcomics',
+            'source_id': 'https://getcomics.org/example/',
+            'title': 'Replacement',
+            'aliases': ['Replacement Comics'],
+            'year': 2020,
+            'volume_number': 2,
+            'comicvine_id': None,
+            'release_link': 'https://getcomics.org/example/',
+            'display_title': 'Replacement Vol 2'
+        })
+
+        self.assertEqual(match['volume_id'], 4)
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('ON CONFLICT(volume_id) DO UPDATE', sql)
+        self.assertEqual(json.loads(params[4]), ['Replacement Comics'])
+
+    @patch('backend.implementations.volumes.get_db')
+    def test_clear_search_match_deletes_only_override(self, get_db):
+        cursor = MagicMock()
+        get_db.return_value = cursor
+        Volume(4).clear_search_match()
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('DELETE FROM volume_search_matches', sql)
+        self.assertEqual(params, (4,))
 
 
 class LibraryFilterTest(unittest.TestCase):
