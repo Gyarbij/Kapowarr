@@ -52,8 +52,10 @@ function fillPlanning(api_key) {
 			entry.querySelector('.next-column').innerText = task.interval > 0
 				? convertTime(task.next_run, true)
 				: 'Disabled';
-			entry.querySelector('button').onclick =
-				e => sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': task.task_name})
+			entry.querySelector('button').onclick = () => {
+				sendAPI('POST', '/system/tasks', api_key, {}, {'cmd': task.task_name})
+				.then(() => refreshPage(api_key))
+			};
 
 			TaskEls.intervals.appendChild(entry);
 		});
@@ -87,12 +89,16 @@ function clearHistory(api_key) {
 	TaskEls.history.innerHTML = '';
 };
 
+function refreshPage(api_key) {
+	fillPlanning(api_key);
+	fillHistory(api_key);
+};
+
 // code run on load
 
 usingApiKey()
 .then(api_key => {
-	fillHistory(api_key);
-	fillPlanning(api_key);
-	TaskEls.buttons.refresh.onclick = e => fillHistory(api_key);
+	refreshPage(api_key);
+	TaskEls.buttons.refresh.onclick = e => refreshPage(api_key);
 	TaskEls.buttons.clear.onclick = e => clearHistory(api_key);
 });
