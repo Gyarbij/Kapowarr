@@ -394,6 +394,9 @@ def __sort_link_paths(p: List[DownloadGroup]) -> Tuple[float, int]:
     Returns:
         Tuple[float, int]: The rating (lower is better).
     """
+    if not p:
+        return (float('inf'), 1)
+
     if p[0]['info']['special_version']:
         return (0.0, 0)
 
