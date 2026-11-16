@@ -142,4 +142,5 @@ function applyTheme(value) {
 		else
 			document.querySelector(':root').classList.remove('dark-mode');
 	}
+	storeAppliedTheme();
 }

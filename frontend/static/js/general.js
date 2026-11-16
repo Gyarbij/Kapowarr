@@ -478,4 +478,23 @@ function applyTheme(value) {
 		else
 			document.querySelector(':root').classList.remove('dark-mode');
 	}
+	storeAppliedTheme();
+}
+
+function storeAppliedTheme() {
+	// The server renders the next page with this theme already applied,
+	// which avoids a flash of the light theme before this script runs.
+	const className =
+		document.querySelector(':root').classList.contains('dark-mode')
+			? 'dark-mode'
+			: '';
+
+	const expires = new Date();
+	if (className === '')
+		// Expire it, which removes it
+		expires.setTime(expires.getTime() - 86400 * 1000);
+	else
+		expires.setTime(expires.getTime() + 86400 * 1000);
+
+	document.cookie = `theme=${className}; expires=${expires.toUTCString()}; path=/;`;
 }
