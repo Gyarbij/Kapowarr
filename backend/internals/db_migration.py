@@ -1513,3 +1513,22 @@ def _migrate_add_volume_search_matches():
         );
     """)
     return
+
+
+@DatabaseMigrationHandler.register_handler(52)
+def _migrate_add_pending_release_date():
+    """Keep the date on which a pending release comes out, so that its volume
+    can be refreshed around that date."""
+    cursor = get_db()
+    columns = {
+        column[1]
+        for column in cursor.execute(
+            "PRAGMA table_info(pending_release_watches);"
+        )
+    }
+    if 'release_date' not in columns:
+        cursor.execute("""
+            ALTER TABLE pending_release_watches
+                ADD COLUMN release_date VARCHAR(10);
+        """)
+    return

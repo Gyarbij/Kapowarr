@@ -4,7 +4,7 @@ from asyncio import get_running_loop
 from json import dumps, loads
 from threading import Lock
 from time import time
-from typing import Any, Dict, Tuple, Union
+from typing import Any, Callable, Dict, Tuple, Union
 
 from backend.base.logging import LOGGER
 from backend.internals.db import get_db
@@ -111,10 +111,30 @@ class ResponseCache:
         self,
         resource: str,
         cache_key: str,
-        ttl: int,
+        ttl: Union[int, Callable[[Any], int]],
         fetcher,
         force_refresh: bool = False
     ) -> Any:
+        """Get a response from the cache, or fetch and cache it.
+
+        Args:
+            resource (str): The resource of the response.
+
+            cache_key (str): The key of the response.
+
+            ttl (Union[int, Callable[[Any], int]]): For how many seconds a
+                fetched response is used. Either the amount, or a function
+                that gives the amount for the response that was fetched.
+
+            fetcher: The function to fetch the response with.
+
+            force_refresh (bool, optional): Fetch the response, even if it's
+                cached.
+                Defaults to False.
+
+        Returns:
+            Any: The response.
+        """
         now = round(time())
         if not force_refresh:
             cached = self._read_response(resource, cache_key, now)
@@ -148,7 +168,10 @@ class ResponseCache:
                     return stale
                 raise
 
-            self._store_response(resource, cache_key, value, now, ttl)
+            self._store_response(
+                resource, cache_key, value, now,
+                ttl(value) if callable(ttl) else ttl
+            )
             self._generations[lock_key] = generation + 1
             return value
         finally:

@@ -1,24 +1,31 @@
 # -*- coding: utf-8 -*-
 
 import re
-from asyncio import gather
-from datetime import date, datetime, timedelta
-from json import loads
-from typing import Dict, List, Union
+from datetime import date, datetime, timedelta, timezone
+from json import JSONDecoder, loads
+from typing import Any, Dict, List, Union
 from urllib.parse import urljoin, urlparse
 
+from aiohttp import ClientError
 from bs4 import BeautifulSoup
 
 from backend.base.file_extraction import extract_filename_data
 from backend.base.helpers import AsyncSession
-from backend.implementations.release_discovery import ReleaseDiscoveryProvider
+from backend.base.logging import LOGGER
+from backend.implementations.release_discovery import (
+    ReleaseDiscoveryProvider,
+    WeeklyDiscoveryProvider,
+)
 from backend.implementations.weekly_packs import get_weekly_packs
+from backend.internals.settings import Settings
 
 MARVEL_CALENDAR_URL = 'https://www.marvel.com/comics/calendar'
 DC_CATALOG_URL = 'https://www.dc.com/comics'
 LUNAR_RELEASE_URL = (
     'https://www.lunardistribution.com/home/instoreproducts'
 )
+COMIXNOW_URL = 'https://comixnow.com'
+LOCG_URL = 'https://leagueofcomicgeeks.com'
 PUBLISHER_BROWSER_HEADERS = {
     'User-Agent': (
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
@@ -32,7 +39,42 @@ MARVEL_DATE_REGEX = re.compile(
     re.IGNORECASE
 )
 MARVEL_ISSUE_REGEX = re.compile(r'/comics/issue/(?P<id>\d+)/')
-DC_PRODUCT_REGEX = re.compile(r'^\d{4}DC', re.IGNORECASE)
+LUNAR_CODE_REGEX = re.compile(r'^\d{4}(?P<publisher>[A-Z]{2})\d')
+# Signed and graded copies of issues that came out before, mostly of other
+# publishers and sold by Dynamic Forces ('DF')
+LUNAR_COLLECTIBLE_REGEX = re.compile(
+    r'^DF\s|\b(?:CGC|SIGNED|REMARKED)\b',
+    re.IGNORECASE
+)
+COMIXNOW_DATE_REGEX = re.compile(
+    r'DC Weekly\W+(?P<date>[A-Z][a-z]+ \d{1,2}, \d{4})'
+)
+# Covers other than the main one come out later than the issue itself at
+# times, and would give the issue a later date
+LUNAR_VARIANT_COVER_REGEX = re.compile(r'\bCVR\s+(?!A\b)[A-Z]{1,2}\b')
+REPRINT_REGEX = re.compile(
+    r'\bfacsimile\b|\breprint\b'
+    r'|\b(?:\d+(?:st|nd|rd|th)|second|third|fourth|fifth)\s+'
+    r'(?:ptg|print(?:ing)?)\b',
+    re.IGNORECASE
+)
+
+# The publisher is the two letters in the product code. Only the codes that
+# are of a single publisher are here. E.g. 'MP' is shared by multiple small
+# publishers, so the publisher of those products is not known.
+LUNAR_PUBLISHERS = {
+    'DC': 'DC Comics',
+    'IM': 'Image Comics',
+    'DE': 'Dynamite Entertainment',
+    'TN': 'Titan Comics',
+    'MA': 'Mad Cave Studios',
+    'BD': 'Bad Idea',
+    'ZE': 'Zenescope Entertainment',
+    'BM': 'Black Mask Studios'
+}
+
+# What ComixNOW lists that isn't a new issue of a series
+COMIXNOW_SKIPPED_KINDS = ('book', 'facsimile', 'reprint')
 
 
 def _iso_date(value: str) -> str:
@@ -47,6 +89,48 @@ def _valid_external_url(url: str, hostname: str) -> bool:
     )
 
 
+async def _fetch_page(
+    session: AsyncSession,
+    url: str,
+    params: Any = None,
+    missing_ok: bool = False
+) -> str:
+    """Fetch a page of a source.
+
+    Args:
+        session (AsyncSession): The session to make the request with.
+
+        url (str): The URL of the page.
+
+        params (Any, optional): The parameters of the URL.
+            Defaults to None.
+
+        missing_ok (bool, optional): Give an empty string when the source
+            doesn't have the page, instead of that being a failure.
+            Defaults to False.
+
+    Raises:
+        ClientError: The source didn't give the page. Raising makes that the
+            last successful response is kept, instead of an error page being
+            taken for there not being any releases.
+
+    Returns:
+        str: The body of the response.
+    """
+    async with session.get(
+        url,
+        params=params,
+        headers=PUBLISHER_BROWSER_HEADERS
+    ) as response:
+        if missing_ok and response.status == 404:
+            return ''
+        if not response.ok:
+            raise ClientError(
+                f'{urlparse(url).hostname} responded with {response.status}'
+            )
+        return await response.text()
+
+
 def _record(
     provider: str,
     external_id: str,
@@ -56,8 +140,14 @@ def _record(
     release_date: Union[str, None],
     cover_url: Union[str, None] = None
 ) -> Union[dict, None]:
+    if REPRINT_REGEX.search(title):
+        # A reprint has the number of an issue that came out before. It isn't
+        # a new issue of the series, and would be taken for one.
+        return None
+
     parsed = extract_filename_data(
-        title,
+        # Everything before a slash would be taken for a folder
+        title.replace('/', ' - '),
         assume_volume_number=False,
         fix_year=True
     )
@@ -84,10 +174,77 @@ def _record(
     }
 
 
+def _marvel_structured_releases(html: str) -> Union[Dict[str, Any], None]:
+    """Get the releases that the Marvel calendar has embedded in the page as
+    data. That has the date per release and whether it is a variant cover.
+
+    Returns:
+        Union[Dict[str, Any], None]: The total amount of releases under
+            `total` and the ones in the page under `content`, or `None` if
+            the page doesn't have the data.
+    """
+    marker = html.find('"allComicsReleases"')
+    start = html.find('{', marker) if marker != -1 else -1
+    if start == -1:
+        return None
+    try:
+        releases, _ = JSONDecoder().raw_decode(html[start:])
+    except ValueError:
+        return None
+    if not (
+        isinstance(releases, dict)
+        and isinstance(releases.get('content'), list)
+    ):
+        return None
+    return releases
+
+
 def parse_marvel_calendar(html: str) -> List[dict]:
-    soup = BeautifulSoup(html, 'html.parser')
     records = []
     seen = set()
+
+    structured = _marvel_structured_releases(html)
+    for release in (structured or {}).get('content', ()):
+        if not isinstance(release, dict) or release.get('isVariant'):
+            continue
+        link = release.get('link')
+        image = release.get('image')
+        external_url = str(
+            link.get('link') or '' if isinstance(link, dict) else ''
+        )
+        cover_url = str(
+            image.get('filename') or '' if isinstance(image, dict) else ''
+        )
+        match = MARVEL_ISSUE_REGEX.search(external_url)
+        release_date = str(release.get('releaseDate') or '')[:10]
+        if (
+            match is None
+            or match.group('id') in seen
+            or not release_date
+            or not _valid_external_url(external_url, 'marvel.com')
+        ):
+            continue
+        try:
+            date.fromisoformat(release_date)
+        except ValueError:
+            continue
+        record = _record(
+            'marvel',
+            match.group('id'),
+            external_url,
+            'Marvel Comics',
+            str(release.get('headline') or ''),
+            release_date,
+            cover_url if cover_url.startswith('http') else None
+        )
+        if record is not None:
+            records.append(record)
+            seen.add(match.group('id'))
+
+    if records:
+        return records
+
+    soup = BeautifulSoup(html, 'html.parser')
 
     def add_link(link, release_date: str, cover_url=None) -> None:
         href_value = link.get('href')
@@ -163,7 +320,16 @@ def parse_lunar_releases(response: Dict) -> List[dict]:
         code = str(product.get('Code', ''))
         title = str(product.get('Title', ''))
         release_value = str(product.get('Instore', ''))
-        if not DC_PRODUCT_REGEX.match(code) or not title or not release_value:
+        code_match = LUNAR_CODE_REGEX.match(code.upper())
+        publisher = LUNAR_PUBLISHERS.get(
+            code_match.group('publisher') if code_match else ''
+        )
+        if publisher is None or not title or not release_value:
+            continue
+        if (
+            LUNAR_COLLECTIBLE_REGEX.search(title)
+            or LUNAR_VARIANT_COVER_REGEX.search(title)
+        ):
             continue
         try:
             release_date = _iso_date(release_value)
@@ -173,7 +339,7 @@ def parse_lunar_releases(response: Dict) -> List[dict]:
             'lunar',
             code,
             'https://www.lunardistribution.com/',
-            'DC Comics',
+            publisher,
             title,
             release_date,
             str(product.get('ImageUrl') or '') or None
@@ -289,19 +455,205 @@ def parse_dc_catalog(html: str) -> List[dict]:
     return records
 
 
-class MarvelCalendarProvider(ReleaseDiscoveryProvider):
+def parse_comixnow_weekly(html: str) -> List[dict]:
+    """Get the new issues from a 'DC Weekly' page of ComixNOW.
+
+    The date of the releases is taken from the page. When there is no page for
+    the week that was asked for, ComixNOW gives the page of another week.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    date_match = COMIXNOW_DATE_REGEX.search(
+        ' '.join(
+            element.get_text(' ', strip=True)
+            for element in (soup.title, soup.find('h1'))
+            if element is not None
+        )
+    )
+    if date_match is None:
+        return []
+    try:
+        release_date = datetime.strptime(
+            date_match.group('date'), '%B %d, %Y'
+        ).date().isoformat()
+    except ValueError:
+        return []
+
+    records = []
+    seen = set()
+    for card in soup.select('article.release-card'):
+        kind = card.select_one('.release-kind')
+        link = card.select_one('.release-title a[href]')
+        if link is None or (
+            kind is not None
+            and kind.get_text(strip=True).lower() in COMIXNOW_SKIPPED_KINDS
+        ):
+            continue
+
+        href_value = link.get('href')
+        href = href_value if isinstance(href_value, str) else ''
+        external_url = urljoin(COMIXNOW_URL, href)
+        external_id = href.strip('/')
+        if (
+            # Collected editions are under '/books/'
+            not href.startswith('/comics/')
+            or external_id in seen
+            or not _valid_external_url(external_url, 'comixnow.com')
+        ):
+            continue
+
+        cover = card.select_one('img.release-cover[src]')
+        cover_value = cover.get('src') if cover is not None else None
+        record = _record(
+            'comixnow',
+            external_id,
+            external_url,
+            'DC Comics',
+            ' '.join(link.get_text(' ', strip=True).split()),
+            release_date,
+            cover_value if isinstance(cover_value, str) else None
+        )
+        if record is None:
+            continue
+        # The link also has the year in which the series started. It's not
+        # used, as it differs from the year of the volume in the library for
+        # series that went back to their original numbering. Releases are
+        # only matched to a volume of the same year, so those wouldn't match.
+        records.append(record)
+        seen.add(external_id)
+    return records
+
+
+def _locg_release_list(body: str) -> str:
+    """Get the HTML with the list of releases out of a response of League of
+    Comic Geeks. It's a field of a JSON response. When the response came
+    through a browser (FlareSolverr), then that JSON is inside of a page.
+
+    Raises:
+        ValueError: The response is not a list of releases, e.g. because it's
+            a page that blocks the request.
+
+    Returns:
+        str: The HTML with the list of releases.
+    """
+    candidates = [body]
+    if not body.lstrip().startswith('{'):
+        page_content = BeautifulSoup(body, 'html.parser').find('pre')
+        if page_content is not None:
+            candidates.append(page_content.get_text())
+
+    for candidate in candidates:
+        try:
+            response = loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(response, dict) and isinstance(
+            response.get('list'), str
+        ):
+            return response['list']
+
+    raise ValueError('Response is not a list of releases')
+
+
+def parse_locg_releases(body: str) -> List[dict]:
+    soup = BeautifulSoup(_locg_release_list(body), 'html.parser')
+    records = []
+    seen = set()
+    for entry in soup.select('li.issue[data-comic]'):
+        external_id = str(entry.get('data-comic') or '')
+        link = entry.select_one('.title a[href]')
+        publisher = entry.select_one('.publisher')
+        date_element = entry.select_one('.date[data-date]')
+        if (
+            not external_id
+            or external_id in seen
+            # Variant covers refer to the comic that they're a variant of
+            or str(entry.get('data-parent') or '0') != '0'
+            or link is None
+            or publisher is None
+            or date_element is None
+        ):
+            continue
+
+        try:
+            release_date = datetime.fromtimestamp(
+                int(str(date_element.get('data-date'))),
+                tz=timezone.utc
+            ).date().isoformat()
+        except (ValueError, OverflowError, OSError):
+            continue
+
+        href_value = link.get('href')
+        external_url = urljoin(
+            LOCG_URL,
+            href_value if isinstance(href_value, str) else ''
+        )
+        if not _valid_external_url(external_url, 'leagueofcomicgeeks.com'):
+            continue
+
+        cover = entry.select_one('.cover img')
+        cover_value = (
+            cover.get('data-src') or cover.get('src')
+            if cover is not None
+            else None
+        )
+        record = _record(
+            'locg',
+            external_id,
+            external_url,
+            ' '.join(publisher.get_text(' ', strip=True).split()),
+            ' '.join(link.get_text(' ', strip=True).split()),
+            release_date,
+            cover_value
+            if isinstance(cover_value, str)
+            and cover_value.startswith('http')
+            else None
+        )
+        if record is not None:
+            records.append(record)
+            seen.add(external_id)
+    return records
+
+
+class MarvelCalendarProvider(WeeklyDiscoveryProvider):
     key = 'marvel'
     ttl = 6 * 60 * 60
 
-    async def fetch(self, start_date: str, end_date: str) -> List[dict]:
+    async def fetch_week(self, week_start: date, week_end: date) -> List[dict]:
+        # The calendar gives a limited amount of releases per request, and
+        # the latest ones first. So it has to be asked one week at a time.
+        # Variant covers are not asked for, as they count towards that amount.
         async with AsyncSession() as session:
-            html = await session.get_text(
+            html = await _fetch_page(
+                session,
                 MARVEL_CALENDAR_URL,
-                params={
-                    'dateStart': start_date,
-                    'dateEnd': end_date
+                {
+                    'dateStart': week_start.isoformat(),
+                    'dateEnd': week_end.isoformat()
                 },
-                headers=PUBLISHER_BROWSER_HEADERS
+                # What the calendar gives for a week without releases
+                missing_ok=True
+            )
+        if not html:
+            return []
+
+        structured = _marvel_structured_releases(html)
+        if structured is None and not MARVEL_DATE_REGEX.search(html):
+            # Not the calendar, e.g. a page that blocks the request. That
+            # is not the same as a week without releases.
+            raise ValueError('Response is not the Marvel calendar')
+
+        total = (structured or {}).get('total')
+        if (
+            structured is not None
+            and isinstance(total, int)
+            and total > len(structured['content'])
+        ):
+            LOGGER.warning(
+                'The Marvel calendar gave %d of the %d releases '
+                'for the week of %s',
+                len(structured['content']),
+                total,
+                week_start.isoformat()
             )
         return parse_marvel_calendar(html)
 
@@ -312,39 +664,116 @@ class DCCatalogProvider(ReleaseDiscoveryProvider):
 
     async def fetch(self, start_date: str, end_date: str) -> List[dict]:
         async with AsyncSession() as session:
-            html = await session.get_text(
-                DC_CATALOG_URL,
-                headers=PUBLISHER_BROWSER_HEADERS
-            )
+            html = await _fetch_page(session, DC_CATALOG_URL)
         return parse_dc_catalog(html)
 
 
-class LunarReleaseProvider(ReleaseDiscoveryProvider):
+class ComixNowProvider(WeeklyDiscoveryProvider):
+    key = 'comixnow'
+    ttl = 12 * 60 * 60
+
+    async def fetch_week(self, week_start: date, week_end: date) -> List[dict]:
+        release_day = week_start + timedelta(days=3)
+        async with AsyncSession() as session:
+            html = await _fetch_page(
+                session,
+                f'{COMIXNOW_URL}/dc-weekly/dc-comics-available-on-'
+                f'{release_day.strftime("%B").lower()}-{release_day.day}'
+                f'-{release_day.year}/'
+            )
+        return [
+            record
+            for record in parse_comixnow_weekly(html)
+            # Not the page of another week
+            if week_start.isoformat()
+                <= record['release_date']
+                <= week_end.isoformat()
+        ]
+
+
+class LunarReleaseProvider(WeeklyDiscoveryProvider):
     key = 'lunar'
     ttl = 12 * 60 * 60
 
-    async def _fetch_date(self, session: AsyncSession, value: date) -> List[dict]:
+    MAX_RELEASE_DAYS = 4
+    "The maximum amount of days in a week of which the releases are fetched"
+
+    async def _fetch_date(
+        self,
+        session: AsyncSession,
+        value: date
+    ) -> Dict[str, Any]:
         request_date = f'{value.month}/{value.day}/{value.year}'
         async with session.post(LUNAR_RELEASE_URL, json=request_date) as response:
+            if not response.ok:
+                raise ClientError(
+                    f'Lunar responded with {response.status}'
+                )
             payload = loads(await response.text())
-        return parse_lunar_releases(payload)
+        return payload if isinstance(payload, dict) else {}
 
-    async def fetch(self, start_date: str, end_date: str) -> List[dict]:
-        start = date.fromisoformat(start_date)
-        end = date.fromisoformat(end_date)
-        dates = []
-        current = start
-        while current <= end:
-            if current.weekday() in (1, 2):
-                dates.append(current)
-            current += timedelta(days=1)
-
+    async def fetch_week(self, week_start: date, week_end: date) -> List[dict]:
+        # Lunar only gives the releases of the exact day that is asked for,
+        # together with the release days before and after it. Most releases
+        # are on Wednesday, so start there and follow those to the other
+        # release days of the week.
+        records: List[dict] = []
+        pending = [week_start + timedelta(days=3)]
+        fetched = set()
         async with AsyncSession() as session:
-            responses = await gather(*(
-                self._fetch_date(session, value)
-                for value in dates
-            ))
-        return [record for response in responses for record in response]
+            while pending and len(fetched) < self.MAX_RELEASE_DAYS:
+                release_day = pending.pop()
+                if (
+                    release_day in fetched
+                    or not week_start <= release_day <= week_end
+                ):
+                    continue
+                fetched.add(release_day)
+
+                payload = await self._fetch_date(session, release_day)
+                records.extend(parse_lunar_releases(payload))
+
+                if not payload.get('success') and len(fetched) == 1:
+                    # Nothing on Wednesday. The other common day is Tuesday.
+                    pending.append(week_start + timedelta(days=2))
+                for neighbour in ('previous', 'next'):
+                    try:
+                        pending.append(datetime.strptime(
+                            str(payload.get(neighbour)), '%m/%d/%Y'
+                        ).date())
+                    except ValueError:
+                        continue
+        return records
+
+
+class LeagueOfComicGeeksProvider(WeeklyDiscoveryProvider):
+    key = 'locg'
+    ttl = 12 * 60 * 60
+    concurrency = 1
+    # Every request has to be handled by FlareSolverr, which takes a while
+    background_only = True
+
+    def is_available(self) -> bool:
+        # The site only lets browsers through
+        return bool(Settings().sv.flaresolverr_base_url)
+
+    async def fetch_week(self, week_start: date, week_end: date) -> List[dict]:
+        release_day = week_start + timedelta(days=3)
+        async with AsyncSession() as session:
+            body = await _fetch_page(
+                session,
+                f'{LOCG_URL}/comic/get_comics',
+                [
+                    ('list', 'releases'),
+                    ('view', 'thumbs'),
+                    # Only comics, so no collected editions
+                    ('format[]', '1'),
+                    ('date_type', 'week'),
+                    ('date', release_day.strftime('%m/%d/%Y')),
+                    ('order', 'alpha-asc')
+                ]
+            )
+        return parse_locg_releases(body)
 
 
 class GetComicsWeeklyProvider(ReleaseDiscoveryProvider):

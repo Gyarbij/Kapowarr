@@ -30,7 +30,7 @@ is announced elsewhere but that the metadata source doesn't list yet.
 
 PENDING_RELEASE_MAX_AGE = 30 * 24 * 60 * 60
 """
-For how many seconds after a release was announced the volume is refreshed for
+For how many seconds after a release was expected the volume is refreshed for
 it. After that, the volume is left to the regular library update.
 """
 
@@ -80,6 +80,7 @@ def _volumes_behind_on_release_cache() -> Set[int]:
 def _due_for_pending_release(
     last_fetch: float,
     announced_at: float,
+    expected_at: float,
     now: float
 ) -> bool:
     """Check whether a volume should be refreshed for a release that was
@@ -88,25 +89,43 @@ def _due_for_pending_release(
 
     The volume is refreshed once as soon as the release is announced. If the
     metadata source doesn't list the issue yet, then it's tried again later.
-    The time in between tries grows with the age of the announcement, as it
-    becomes less likely that the issue will still be added.
+    Metadata sources mostly add an issue around the date that it comes out.
+    So the closer to that date, the less time there is in between tries.
 
     Args:
         last_fetch (float): The epoch time of the last refresh of the volume.
-        announced_at (float): The epoch time of the announcement.
+
+        announced_at (float): The epoch time at which the release was first
+            seen.
+
+        expected_at (float): The epoch time at which the issue comes out. If
+            that's before it was announced, then the announcement is when
+            the issue is expected.
+
         now (float): The current epoch time.
 
     Returns:
         bool: Whether the volume should be refreshed.
     """
-    if announced_at < now - PENDING_RELEASE_MAX_AGE:
+    expected_at = max(announced_at, expected_at)
+    if expected_at < now - PENDING_RELEASE_MAX_AGE:
         return False
 
     if last_fetch < announced_at - ROUNDING_MARGIN:
         # Not refreshed yet since the announcement
         return True
 
-    return last_fetch <= now - max(RETRY_INTERVAL, (now - announced_at) / 4)
+    return last_fetch <= now - max(
+        RETRY_INTERVAL,
+        abs(now - expected_at) / 4
+    )
+
+
+def _epoch_of_date(value: Union[str, None]) -> float:
+    try:
+        return datetime.strptime(value or '', '%Y-%m-%d').timestamp()
+    except ValueError:
+        return 0.0
 
 
 def _volumes_with_pending_releases(now: float) -> Set[int]:
@@ -121,13 +140,21 @@ def _volumes_with_pending_releases(now: float) -> Set[int]:
     """
     return {
         volume_id
-        for volume_id, last_fetch, announced_at in get_db().execute("""
-            SELECT v.id, COALESCE(v.last_cv_fetch, 0), w.first_seen
+        for volume_id, last_fetch, announced_at, release_date
+        in get_db().execute("""
+            SELECT
+                v.id, COALESCE(v.last_cv_fetch, 0),
+                w.first_seen, w.release_date
             FROM pending_release_watches w
             INNER JOIN volumes v
                 ON v.id = w.volume_id;
         """)
-        if _due_for_pending_release(last_fetch, announced_at, now)
+        if _due_for_pending_release(
+            last_fetch,
+            announced_at,
+            _epoch_of_date(release_date),
+            now
+        )
     }
 
 
@@ -142,13 +169,6 @@ def find_volumes_with_new_releases() -> Set[int]:
         _volumes_behind_on_release_cache()
         | _volumes_with_pending_releases(time())
     )
-
-
-def _epoch_of_date(value: Union[str, None]) -> float:
-    try:
-        return datetime.strptime(value or '', '%Y-%m-%d').timestamp()
-    except ValueError:
-        return 0.0
 
 
 def find_pending_weekly_pack_volumes(
@@ -192,7 +212,12 @@ def find_pending_weekly_pack_volumes(
             """,
             tuple(announcements)
         )
-        if _due_for_pending_release(last_fetch, announcements[volume_id], now)
+        if _due_for_pending_release(
+            last_fetch,
+            announcements[volume_id],
+            announcements[volume_id],
+            now
+        )
     }
 
 

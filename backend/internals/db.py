@@ -665,6 +665,7 @@ CREATE TABLE IF NOT EXISTS pending_release_watches(
     volume_id INTEGER NOT NULL,
     first_seen INTEGER NOT NULL,
     last_checked INTEGER NOT NULL,
+    release_date VARCHAR(10),
 
     FOREIGN KEY (volume_id) REFERENCES volumes(id)
         ON DELETE CASCADE

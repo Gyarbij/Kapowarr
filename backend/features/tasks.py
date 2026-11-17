@@ -832,9 +832,12 @@ class RefreshReleaseDiscovery(Task):
 
     def run(self) -> List[Tuple[str, int, Union[int, None]]]:
         from asyncio import run as async_run
-        from datetime import datetime, timedelta
+        from datetime import date
 
-        from backend.implementations.release_discovery import get_release_discovery
+        from backend.implementations.release_discovery import (
+            get_discovery_range,
+            get_release_discovery,
+        )
 
         self.message = 'Refreshing supplemental release discovery'
         WebSocket().emit(TaskStatusEvent(self.message))
@@ -844,12 +847,12 @@ class RefreshReleaseDiscovery(Task):
                 'SELECT record_key FROM pending_release_watches;'
             )
         }
-        today = datetime.now().date()
-        date_range = (
-            (today - timedelta(days=60)).isoformat(),
-            (today + timedelta(days=30)).isoformat()
-        )
-        items = async_run(get_release_discovery(*date_range))
+        today = date.today().isoformat()
+        date_range = get_discovery_range()
+        items = async_run(get_release_discovery(
+            *date_range,
+            background=True
+        ))
 
         # Volumes with an announced release that their metadata doesn't have
         # are refreshed now, instead of waiting until the library update gets
@@ -866,7 +869,10 @@ class RefreshReleaseDiscovery(Task):
                 for item in items
                 if item['local_status'] == 'metadata_pending'
             )
-            items = async_run(get_release_discovery(*date_range))
+            items = async_run(get_release_discovery(
+                *date_range,
+                background=True
+            ))
 
         if self.stop:
             return []
@@ -879,6 +885,9 @@ class RefreshReleaseDiscovery(Task):
                 or item['local_status'] != 'missing_monitored'
                 or item['local_volume_id'] is None
                 or item['local_issue_id'] is None
+                # Releases are known before they're out, and there is nothing
+                # to find for an issue that isn't out yet
+                or (item.get('release_date') or today) > today
             ):
                 continue
             promoted += 1

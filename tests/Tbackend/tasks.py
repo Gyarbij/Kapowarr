@@ -1,4 +1,5 @@
 import unittest
+from datetime import date, timedelta
 from time import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -333,18 +334,33 @@ class TaskFlowTest(unittest.TestCase):
             'record_key': 'lobo:7',
             'local_status': 'metadata_pending',
             'local_volume_id': 3643,
-            'local_issue_id': None
+            'local_issue_id': None,
+            'release_date': date.today().isoformat()
         }
         resolved = {
             **announced,
             'local_status': 'missing_monitored',
             'local_issue_id': 307
         }
+        # Known ahead of when it comes out
+        upcoming = {
+            **announced,
+            'record_key': 'lobo:8',
+            'release_date': (date.today() + timedelta(days=21)).isoformat()
+        }
+        upcoming_resolved = {
+            **upcoming,
+            'local_status': 'missing_monitored',
+            'local_issue_id': 308
+        }
 
         with patch(
             'backend.implementations.release_discovery.get_release_discovery',
-            side_effect=([announced], [resolved])
-        ), patch(
+            side_effect=(
+                [announced, upcoming],
+                [resolved, upcoming_resolved]
+            )
+        ) as get_discovery, patch(
             'backend.features.tasks.find_volumes_with_new_releases',
             return_value={3643}
         ), patch(
@@ -354,6 +370,9 @@ class TaskFlowTest(unittest.TestCase):
             result = RefreshReleaseDiscovery().run()
 
         self.assertEqual(refresh.call_args.args[0], {3643})
+        # The slow sources are fetched from too, as nothing waits for the task
+        self.assertTrue(get_discovery.call_args.kwargs['background'])
+        # Only the issue that is out is searched for
         auto_search.assert_called_once_with(3643, 307)
         self.assertEqual(result, [(
             'https://getcomics.org/dc/lobo-7-2026/',

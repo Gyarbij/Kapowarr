@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 from backend.base.custom_exceptions import InvalidComicVineApiKey
@@ -45,7 +46,8 @@ class ReleaseRefreshTestCase(unittest.TestCase):
                 record_key TEXT PRIMARY KEY,
                 volume_id INTEGER NOT NULL,
                 first_seen INTEGER NOT NULL,
-                last_checked INTEGER NOT NULL
+                last_checked INTEGER NOT NULL,
+                release_date VARCHAR(10)
             );
         """)
         patches = (
@@ -88,10 +90,17 @@ class ReleaseRefreshTestCase(unittest.TestCase):
              NOW - fetched_ago)
         )
 
-    def add_watch(self, volume_id, announced_ago):
+    def add_watch(self, volume_id, announced_ago, release_in=None):
+        """Add a pending release for a volume. `release_in` is in how many
+        seconds it comes out (negative for the past), if that's known."""
         self.cursor.execute(
-            'INSERT INTO pending_release_watches VALUES (?, ?, ?, ?);',
-            (f'key:{volume_id}', volume_id, NOW - announced_ago, NOW)
+            'INSERT INTO pending_release_watches VALUES (?, ?, ?, ?, ?);',
+            (
+                f'key:{volume_id}', volume_id, NOW - announced_ago, NOW,
+                date.fromtimestamp(NOW + release_in).isoformat()
+                if release_in is not None else
+                None
+            )
         )
 
 
@@ -177,6 +186,37 @@ class PendingReleaseTest(ReleaseRefreshTestCase):
         self.add_watch(1, announced_ago=PENDING_RELEASE_MAX_AGE + DAY)
 
         self.assertEqual(find_volumes_with_new_releases(), set())
+
+    def test_release_known_ahead_is_checked_more_often_towards_its_date(self):
+        # Comes out in about 16 days, so checked every 4 days
+        self.add_volume(1, refreshed_ago=2 * DAY)
+        self.add_volume(2, refreshed_ago=5 * DAY)
+        # Comes out in about 2 days, so checked at least every 12 hours
+        self.add_volume(3, refreshed_ago=DAY)
+        for volume_id, release_in in ((1, 16 * DAY), (2, 16 * DAY), (3, 2 * DAY)):
+            self.add_watch(
+                volume_id, announced_ago=20 * DAY, release_in=release_in
+            )
+
+        self.assertEqual(find_volumes_with_new_releases(), {2, 3})
+
+    def test_release_known_ahead_is_still_followed_once_it_is_out(self):
+        # Known for longer than a release is followed, but out for 3 days
+        self.add_volume(1, refreshed_ago=2 * DAY)
+        self.add_watch(
+            1,
+            announced_ago=PENDING_RELEASE_MAX_AGE + 20 * DAY,
+            release_in=-3 * DAY
+        )
+        # Out for too long
+        self.add_volume(2, refreshed_ago=20 * DAY)
+        self.add_watch(
+            2,
+            announced_ago=PENDING_RELEASE_MAX_AGE + 60 * DAY,
+            release_in=-(PENDING_RELEASE_MAX_AGE + 2 * DAY)
+        )
+
+        self.assertEqual(find_volumes_with_new_releases(), {1})
 
 
 class WeeklyPackTest(ReleaseRefreshTestCase):

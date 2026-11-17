@@ -41,6 +41,26 @@ class ResponseCacheTest(unittest.TestCase):
             'resource', 'key', {'fresh': True}, 100, 60
         )
 
+    @patch('backend.implementations.response_cache.time', return_value=100)
+    def test_ttl_can_depend_on_what_was_fetched(self, _time):
+        cache = ResponseCache('test-ttl')
+        cache._read_response = MagicMock(return_value=None)
+        cache._store_response = MagicMock()
+
+        for response, expected_ttl in (([], 60), (['release'], 3600)):
+            cache._store_response.reset_mock()
+            asyncio.run(cache.get(
+                'resource',
+                f'key-{expected_ttl}',
+                lambda value: 3600 if value else 60,
+                AsyncMock(return_value=response)
+            ))
+
+            self.assertEqual(
+                cache._store_response.call_args.args[-1],
+                expected_ttl
+            )
+
 
 if __name__ == '__main__':
     unittest.main()

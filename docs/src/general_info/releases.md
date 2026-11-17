@@ -17,20 +17,44 @@ without making another metadata request.
 
 Choose 'Discovery' to combine dated publisher/distributor listings with actual
 GetComics availability. Records show every source that contributed to the
-match, whether the issue is available, and its local status. Marvel's official
-calendar, DC's catalog, Lunar's dated release data, and GetComics Weekly Packs
-are supplemental sources; ComicVine or Metron remains canonical.
+match, whether the issue is available, and its local status. The sources are
+supplemental; ComicVine or Metron remains canonical.
+
+| Source | Covers | Notes |
+| --- | --- | --- |
+| Marvel Calendar | Marvel | The official calendar. |
+| DC Catalog | DC | Recent releases from the official catalog. |
+| ComixNOW DC Weekly | DC | The weekly schedule of DC, months ahead. |
+| Lunar Releases | DC, Image, Dynamite, Titan, Mad Cave, Bad Idea, Zenescope, Black Mask | The in-store dates of the distributor. |
+| League of Comic Geeks | All publishers | Only used when [FlareSolverr](../settings/general.md#flaresolverr-base-url) is set up, as the site only lets browsers through. |
+| GetComics Weekly Packs | All publishers | What is actually available to download. |
+
+Releases are fetched before they come out: 60 days ahead, next to the past
+60 days. Use Custom Dates to look at the upcoming ones. They are fetched per
+week, so that only the weeks of which the releases could have changed are
+fetched again. Reprints, like facsimile editions and second printings, are
+left out as they would be taken for a new issue of the series. So are signed
+copies and variant covers that come out later than the issue itself.
+
+When sources have a different date for the same issue, the date of the source
+that knows best is used: the publisher itself first, then its schedule or
+distributor, then League of Comic Geeks, and GetComics last as that is when
+the issue was made available.
+
+League of Comic Geeks is slow to fetch from, so only the Refresh Release
+Discovery task does that. The page shows what the task has fetched.
 
 'Metadata Pending' means one exact local volume was found, but the announced
 issue is not yet in its canonical metadata. Kapowarr refreshes that volume
-right away, and again later if the metadata source doesn't list the issue yet.
-When Refresh Release Discovery brings the issue in, it's searched for in the
-same run if it's monitored. Kapowarr does not create a provisional issue.
-Ambiguous, unmonitored, and unknown items remain review-only.
+right away, and again later if the metadata source doesn't list the issue yet;
+more often as the date that it comes out gets closer. When Refresh Release
+Discovery brings an issue in that is out, it's searched for in the same run if
+it's monitored. Kapowarr does not create a provisional issue. Ambiguous,
+unmonitored, and unknown items remain review-only.
 
-Each supplemental provider fails independently. Previously cached records from
-other providers remain available if one source is blocked or temporarily
-offline.
+Each supplemental provider fails independently, and so does each week of a
+provider. Previously fetched records remain available if a source is blocked
+or temporarily offline.
 
 ## Weekly Packs
 

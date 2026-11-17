@@ -88,6 +88,41 @@ class DatabaseMigrationReconciliationTest(unittest.TestCase):
         self.assertIn('release_discovery', tables)
         self.assertIn('pending_release_watches', tables)
 
+    def test_pending_release_date_is_added_to_existing_watches(self):
+        self.connection.execute(
+            'CREATE TABLE volumes (id INTEGER PRIMARY KEY);'
+        )
+        with patch.object(
+            db_migration,
+            'get_db',
+            return_value=self.connection
+        ):
+            # The table as it was before the date was kept
+            db_migration._migrate_add_release_discovery()
+            self.connection.execute("""
+                INSERT INTO pending_release_watches
+                VALUES ('lobo:7', 1, 1000, 2000);
+            """)
+            db_migration._migrate_add_pending_release_date()
+            db_migration._migrate_add_pending_release_date()
+
+        self.assertEqual(
+            self.connection.execute(
+                'SELECT * FROM pending_release_watches;'
+            ).fetchall(),
+            [('lobo:7', 1, 1000, 2000, None)]
+        )
+        # Like the table of a new database
+        fresh_database = sqlite3.connect(':memory:')
+        fresh_database.executescript(DB_SCHEMA)
+        table_info = 'PRAGMA table_info(pending_release_watches);'
+        fresh_columns = [row[1] for row in fresh_database.execute(table_info)]
+        fresh_database.close()
+        self.assertEqual(
+            [row[1] for row in self.connection.execute(table_info)],
+            fresh_columns
+        )
+
     def test_unifies_legacy_download_history(self):
         self.connection.executescript("""
             CREATE TABLE volumes (

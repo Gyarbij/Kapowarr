@@ -22,6 +22,15 @@ let rootFoldersLoaded = false;
 let visibleReleaseCount = 100;
 let releaseRequestId = 0;
 
+const DISCOVERY_PROVIDER_NAMES = {
+	getcomics: 'GetComics',
+	marvel: 'Marvel',
+	dc: 'DC',
+	comixnow: 'ComixNOW',
+	lunar: 'Lunar',
+	locg: 'League of Comic Geeks'
+};
+
 function escapeReleaseText(value) {
 	return String(value ?? '').replace(/[&<>'"]/g, character => ({
 		'&': '&amp;',
@@ -130,7 +139,11 @@ function createReleaseCard(release, isLibraryView = false) {
 	const volumeTitle = release.volume_title || release.series_title;
 	const issueNumber = release.issue_number || release.calculated_issue_number;
 	const releaseDate = getReleaseDate(release);
-	const provenance = escapeReleaseText((release.providers || []).join(' · '));
+	const provenance = escapeReleaseText(
+		(release.providers || [])
+			.map(provider => DISCOVERY_PROVIDER_NAMES[provider] || provider)
+			.join(' · ')
+	);
 	const localStatus = escapeReleaseText(
 		(release.local_status || '').replaceAll('_', ' ')
 	);

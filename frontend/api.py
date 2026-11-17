@@ -65,7 +65,10 @@ from backend.implementations.naming import (
     generate_volume_folder_name,
     preview_mass_rename,
 )
-from backend.implementations.release_discovery import get_release_discovery
+from backend.implementations.release_discovery import (
+    get_discovery_range,
+    get_release_discovery,
+)
 from backend.implementations.release_refresh import (
     find_changed_publisher_volumes,
     find_pending_weekly_pack_volumes,
@@ -1326,11 +1329,9 @@ def _filter_discovery_items(items: List[dict]) -> List[dict]:
 @error_handler
 @auth
 def api_release_discovery():
-    today = datetime.now().date()
-    start_date = extract_key(request, 'start_date', False)
-    end_date = extract_key(request, 'end_date', False)
-    start_date = start_date or (today - timedelta(days=60)).isoformat()
-    end_date = end_date or (today + timedelta(days=30)).isoformat()
+    default_start, default_end = get_discovery_range()
+    start_date = extract_key(request, 'start_date', False) or default_start
+    end_date = extract_key(request, 'end_date', False) or default_end
     _validate_release_range(start_date, end_date)
 
     items = run(get_release_discovery(
