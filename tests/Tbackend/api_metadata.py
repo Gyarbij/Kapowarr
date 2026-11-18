@@ -5,6 +5,7 @@ from flask import Flask
 
 from backend.implementations.metadata_sources.base import MetadataSourceType
 from frontend import api
+from tests.Tbackend.release_catalog import MARVEL_URL, announced_issue
 
 
 class MetadataApiTest(unittest.TestCase):
@@ -162,6 +163,89 @@ class MetadataApiTest(unittest.TestCase):
 
         find_changed.assert_not_called()
         self.task_handler.update_new_releases.assert_not_called()
+
+    def test_issue_search_is_independent_of_the_canonical_catalogue(self):
+        loader = AsyncMock(return_value=[
+            announced_issue(),
+            announced_issue(10),
+            announced_issue(publisher='DC Comics')
+        ])
+        with self.app.test_request_context(
+            '/api/releases/search',
+            query_string={
+                'api_key': 'test-key',
+                'query': 'X-Orcists #1',
+                'publisher': 'Marvel',
+                'start_date': '2026-11-01',
+                'end_date': '2026-11-30'
+            }
+        ), patch.object(
+            api, 'Settings', return_value=self.settings
+        ), patch.object(
+            api.StartTypeHandlers, 'diffuse_timer'
+        ), patch.object(
+            api, 'get_release_catalog', loader
+        ), patch.object(api, 'ComicVine') as comicvine:
+            response, status = api.api_release_search()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response['result']['total'], 1)
+        self.assertIsNone(response['result']['items'][0]['local_volume_id'])
+        loader.assert_awaited_once_with(
+            '2026-11-01', '2026-11-30', force_refresh=False
+        )
+        comicvine.assert_not_called()
+
+    def test_issue_search_accepts_a_publisher_issue_url(self):
+        with self.app.test_request_context(
+            '/api/releases/search',
+            query_string={'api_key': 'test-key', 'query': MARVEL_URL}
+        ), patch.object(
+            api, 'Settings', return_value=self.settings
+        ), patch.object(
+            api.StartTypeHandlers, 'diffuse_timer'
+        ), patch.object(
+            api, 'get_release_catalog',
+            AsyncMock(return_value=[announced_issue()])
+        ):
+            response, status = api.api_release_search()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response['result']['total'], 1)
+
+    def test_issue_search_validates_filters_before_fetching(self):
+        invalid_filters = (
+            {'sort': 'invalid'},
+            {'local_status': 'invalid'},
+            {'page': '0'},
+            {'per_page': '101'},
+            {'start_date': '2026-12-01', 'end_date': '2026-11-01'},
+            {'query': 'https://[invalid'}
+        )
+        for filters in invalid_filters:
+            with self.subTest(filters=filters), self.app.test_request_context(
+                '/api/releases/search',
+                query_string={'api_key': 'test-key', **filters}
+            ), patch.object(
+                api, 'Settings', return_value=self.settings
+            ), patch.object(
+                api.StartTypeHandlers, 'diffuse_timer'
+            ), patch.object(api, 'get_release_catalog', AsyncMock()) as loader:
+                _response, status = api.api_release_search()
+
+                self.assertEqual(status, 400)
+                loader.assert_not_awaited()
+
+    def test_issue_search_requires_authentication(self):
+        with self.app.test_request_context(
+            '/api/releases/search?api_key=wrong-key'
+        ), patch.object(
+            api, 'Settings', return_value=self.settings
+        ), patch.object(api, 'get_release_catalog', AsyncMock()) as loader:
+            _response, status = api.api_release_search()
+
+        self.assertEqual(status, 401)
+        loader.assert_not_awaited()
 
 
 if __name__ == '__main__':

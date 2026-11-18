@@ -38,6 +38,39 @@ const SearchEls = {
 	}
 };
 
+let searchRequestId = 0;
+
+function searchPublisherIssues(query, apiKey, requestId) {
+	const section = document.getElementById('publisher-issue-results');
+	const list = document.getElementById('publisher-issue-list');
+	const message = document.getElementById('publisher-issue-message');
+	const more = document.getElementById('publisher-issue-more');
+	section.classList.remove('hidden');
+	list.replaceChildren();
+	more.classList.add('hidden');
+	message.textContent = 'Searching publisher and library issues...';
+
+	fetchAPI('/releases/search', apiKey, {
+		query: encodeURIComponent(query),
+		per_page: 12
+	})
+	.then(json => {
+		if (requestId !== searchRequestId) return;
+		const result = json.result;
+		list.replaceChildren(...result.items.map(issue => IssueCatalog.card(issue)));
+		message.textContent = result.total
+			? `${result.total} matching ${result.total === 1 ? 'issue' : 'issues'}, including publisher listings not yet linked to the library.`
+			: 'No matching issues in the current release window. Series search results are shown below.';
+		more.href = `${url_base}/publishers?view=issues&period=all&query=${encodeURIComponent(query)}`;
+		more.classList.toggle('hidden', result.total === 0);
+	})
+	.catch(error => {
+		if (requestId !== searchRequestId) return;
+		console.error('Publisher issue search failed:', error);
+		message.textContent = 'Publisher issue search failed. Try again or refresh release discovery under System > Tasks.';
+	});
+}
+
 //
 // Searching
 //
@@ -205,10 +238,11 @@ function buildResults(results, api_key) {
 };
 
 function search(reset_url_params=true) {
-	if (!SearchEls.msgs.blocked.classList.contains('hidden'))
-		return;
-
+	const requestId = ++searchRequestId;
+	const query = SearchEls.search_bar.input.value.trim();
 	SearchEls.search_bar.input.blur();
+	SearchEls.msgs.empty.querySelector('p').textContent =
+		'No matching ComicVine series. Publisher issue results are shown separately below.';
 
 	hide([
 		SearchEls.msgs.empty,
@@ -219,14 +253,20 @@ function search(reset_url_params=true) {
 		SearchEls.msgs.loading
 	]);
 
-    if (reset_url_params)
+    if (reset_url_params) {
         emptyParams();
+		history.replaceState({}, '', `?q=${encodeURIComponent(query)}`);
+	}
 
     usingApiKey().then(api_key => {
-		const query = SearchEls.search_bar.input.value;
-		fetchAPI('/volumes/search', api_key, {query: query})
+		searchPublisherIssues(query, api_key, requestId);
+		if (!SearchEls.msgs.blocked.classList.contains('hidden')) {
+			hide([SearchEls.msgs.loading]);
+			return;
+		}
+		fetchAPI('/volumes/search', api_key, {query: encodeURIComponent(query)})
 		.then(json => {
-
+			if (requestId !== searchRequestId) return;
 			buildResults(json.result, api_key);
 
 			if (!SearchEls.search_results.querySelector('button:not(.filter-bar)'))
@@ -235,15 +275,22 @@ function search(reset_url_params=true) {
 				hide([SearchEls.msgs.loading], [SearchEls.search_results]);
 		})
 		.catch(e => {
+			if (requestId !== searchRequestId) return;
 			if (e.status === 400)
 				hide([SearchEls.msgs.loading], [SearchEls.msgs.failed]);
-			else
-				console.log(e);
+			else {
+				console.error('Series search failed:', e);
+				hide([SearchEls.msgs.loading], [SearchEls.msgs.empty]);
+				SearchEls.msgs.empty.querySelector('p').textContent =
+					'Series search failed. Publisher issue results are independent of this search.';
+			}
 		});
 	});
 };
 
 function clearSearch(e) {
+	searchRequestId++;
+	document.getElementById('publisher-issue-results').classList.add('hidden');
 	hide([
 		SearchEls.search_results,
 		SearchEls.msgs.empty,

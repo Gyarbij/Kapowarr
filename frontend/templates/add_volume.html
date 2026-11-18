@@ -4,9 +4,11 @@
 {% block css %}
 	<link rel="stylesheet" href="{{ url_for('static', filename='css/window.css') }}">
 	<link rel="stylesheet" href="{{ url_for('static', filename='css/add_volume.css') }}">
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/issue_catalog.css') }}">
 {% endblock %}
 {% block js %}
 	<script src="{{ url_for('static', filename='js/window.js') }}" defer></script>
+	<script src="{{ url_for('static', filename='js/issue_catalog.js') }}" defer></script>
 	<script src="{{ url_for('static', filename='js/add_volume.js') }}" defer></script>
 {% endblock %}
 
@@ -132,6 +134,7 @@
 			<p>It's easy to add a new volume, just start typing the name of the volume you want to add</p>
 			<br>
 			<p>You can also search using the CV ID of a volume. e.g. 'cv:4050-2127', 'cv:2127' or '4050-2127'</p>
+			<p>Search an issue such as "X-Orcists #1", or paste its publisher URL, to find publisher listings too.</p>
 		</section>
 		<section id="search-empty" class="hidden">
 			<p>No results</p>
@@ -140,12 +143,19 @@
 			<p>Searching...</p>
 		</section>
 		<section id="search-failed" class="hidden">
-			<p>The Comic Vine api key is not set or is invalid</p>
+			<p>ComicVine series search needs a valid API key. Publisher issue search remains available below.</p>
 			<p>Please set a working Comic Vine api key at Settings -> General -> Comic Vine API</p>
 		</section>
 		<section id="search-blocked" class="hidden">
 			<p>You can't add volumes before having added at least one root folder</p>
 			<p>A root folder can be added at Settings -> Media Management -> Root Folders</p>
+		</section>
+		<section id="publisher-issue-results" class="hidden" aria-label="Publisher issue results">
+			<h2>Publisher and library issues</h2>
+			<p class="catalog-notice">These listings are searched independently of ComicVine. A publisher listing can be found before its library series is available; adding a volume still needs a confirmed ComicVine series.</p>
+			<p id="publisher-issue-message" role="status" aria-live="polite"></p>
+			<div id="publisher-issue-list" class="issue-catalog-grid"></div>
+			<a id="publisher-issue-more" class="catalog-source-link hidden">Browse all matching issues</a>
 		</section>
 		<section id="search-results" class="hidden" aria-label="Search Results">
 			<div class="filter-bar" aria-label="Filter Bar">

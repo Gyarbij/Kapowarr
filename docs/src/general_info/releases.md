@@ -13,6 +13,43 @@ or publisher. The selected release type, range, sort order, custom dates, and
 The page initially renders 100 results. Use "Load More" to show the next 100
 without making another metadata request.
 
+## Browsing Publishers And Searching Issues
+
+Publishers opens in the **Issues** view, combining publisher/distributor
+announcements with issues already in your library. It does not depend on
+ComicVine's series search. A newly released issue can therefore be found even
+when ComicVine has not listed its series yet.
+
+Search a title, an issue reference such as `X-Orcists #1`, an issue title, or
+an exact publisher issue URL. Punctuation differences such as `X-Orcists` and
+`X Orcists` do not prevent a match. Issue numbers are matched exactly, so
+`#1` does not match `#10`.
+
+The publisher sidebar keeps your search in the selected publisher. Clearing
+the search does not clear the publisher; use **All publishers** to search
+across publishers again. Release windows cover the past 30 days, this week,
+the next 60 days, or the full prefetched 60 days before and after today.
+Library status, sorting and Load more also preserve the publisher and search.
+The current filters are saved in the page URL and restored on reload.
+
+Issue cards show the release date, contributing sources and local library
+status. **View source** opens the publisher/distributor record.
+**Open volume** opens a matched library volume. **Find library series** opens
+the existing add-volume flow using the series title, not a publisher-specific
+issue ID.
+
+The **Series** view retains canonical series browsing and adding. Choose a
+publisher to browse its recently updated catalogue, or search a series title
+for a targeted lookup. Issue browsing remains available if canonical
+credentials are missing or the series catalogue is unavailable.
+
+Add Volume also shows a separate **Publisher and library issues** result
+section. It supports the same issue references and URLs, even if the
+ComicVine search returns no series or reports an invalid API key. These are
+independent results, not provisional library entries: adding a volume still
+requires confirmed canonical metadata. No publisher ID is stored as a
+ComicVine ID, and finding a listing does not automatically add or download it.
+
 ## Supplemental Discovery
 
 Choose 'Discovery' to combine dated publisher/distributor listings with actual

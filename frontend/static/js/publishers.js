@@ -1,6 +1,7 @@
 // Publishers page JavaScript
 
-const publishersGrid = document.getElementById('publishers-grid');
+const publisherList = document.getElementById('publisher-list');
+const issuesGrid = document.getElementById('issues-grid');
 const volumesGrid = document.getElementById('volumes-grid');
 const loadingIndicator = document.getElementById('loading');
 const emptyState = document.getElementById('empty-state');
@@ -13,6 +14,11 @@ const currentViewLabel = document.getElementById('current-view-label');
 const publisherSortSelect = document.getElementById('publisher-sort');
 const publisherCount = document.getElementById('publisher-count');
 const loadMoreButton = document.getElementById('load-more-button');
+const viewSelect = document.getElementById('publisher-view');
+const periodSelect = document.getElementById('publisher-period');
+const statusSelect = document.getElementById('publisher-status');
+const summary = document.getElementById('publisher-summary');
+const notice = document.getElementById('publisher-notice');
 
 let rootFoldersLoaded = false;
 
@@ -45,78 +51,69 @@ const MAJOR_PUBLISHERS = {
 };
 
 let allPublishers = [];
+let publisherFacets = [];
+let currentIssues = [];
 let currentVolumes = [];
 let currentPublisher = null;
 let searchQuery = '';
-let visiblePublisherCount = 100;
-let visibleVolumeCount = 100;
-let publisherRequestId = 0;
-let volumeRequestId = 0;
+let visibleVolumeCount = 48;
+let catalogueRequestId = 0;
+let issuePage = 1;
+let publisherCatalogueLoaded = false;
+let searchTimer;
 
 // Create a publisher card
 function createPublisherCard(publisher) {
-	const card = document.createElement('div');
+	const card = document.createElement('button');
+	card.type = 'button';
 	card.className = 'publisher-card';
-	card.dataset.cvId = publisher.comicvine_id;
-
-	// Mark major publishers
-	if (MAJOR_PUBLISHERS[publisher.comicvine_id]) {
-		card.classList.add('major');
-	}
-
-	const volumeCount = publisher.volume_count
-		? `${publisher.volume_count} volume${publisher.volume_count === 1 ? '' : 's'}`
-		: 'Browse volumes';
-	card.innerHTML = `
-		<h3 class="publisher-name" title="${publisher.name}">${publisher.name}</h3>
-		<p class="publisher-volumes">${volumeCount}</p>
-	`;
-
-	card.addEventListener('click', () => {
-		showPublisherVolumes(publisher);
-	});
-
+	card.dataset.publisher = publisher.key;
+	const selected = (currentPublisher?.key || '') === publisher.key;
+	card.setAttribute('aria-pressed', String(selected));
+	card.appendChild(IssueCatalog.element('span', 'publisher-name', publisher.name));
+	if (publisher.issue_count != null)
+		card.appendChild(IssueCatalog.element('span', 'publisher-issue-count', String(publisher.issue_count)));
+	card.onclick = () => {
+		currentPublisher = publisher.key ? publisher : null;
+		loadCurrentView();
+	};
 	return card;
 }
 
 // Create a volume card
 function createVolumeCard(volume) {
-	const card = document.createElement('a');
+	const card = document.createElement('article');
 	card.className = 'volume-card';
 	card.dataset.cvId = volume.comicvine_id;
-	
 	if (volume.already_added) {
 		card.classList.add('in-library');
-		card.href = `${url_base}/volumes/${volume.already_added}`;
-	} else {
-		card.href = `${url_base}/add?cv_id=${volume.comicvine_id}`;
 	}
-
-	const coverUrl = volume.cover_link || `${url_base}/static/img/placeholder.svg`;
-
-	card.innerHTML = `
-		<img class="volume-cover" src="${coverUrl}" alt="${volume.title}" loading="lazy">
-		<div class="volume-info">
-			<h3 class="volume-title" title="${volume.title}">${volume.title}</h3>
-			<p class="volume-year">${volume.year || 'Unknown year'}</p>
-			<span class="volume-badge in-library">In Library</span>
-		</div>
-	`;
-
+	const link = document.createElement('a');
+	const query = `${volume.title}${volume.year ? ` (${volume.year})` : ''}`;
+	link.href = volume.already_added
+		? `${url_base}/volumes/${volume.already_added}`
+		: `${url_base}/add?q=${encodeURIComponent(query)}`;
+	const cover = IssueCatalog.element('img', 'volume-cover');
+	cover.src = IssueCatalog.externalURL(volume.cover_link) || `${url_base}/static/img/placeholder.svg`;
+	cover.alt = '';
+	cover.loading = 'lazy';
+	link.appendChild(cover);
+	const info = IssueCatalog.element('div', 'volume-info');
+	info.appendChild(IssueCatalog.element('h3', 'volume-title', volume.title));
+	info.appendChild(IssueCatalog.element('p', 'volume-year', String(volume.year || 'Unknown year')));
+	info.appendChild(IssueCatalog.element('p', 'volume-year', `${volume.issue_count} issues`));
+	link.appendChild(info);
+	card.appendChild(link);
+	if (volume.already_added)
+		card.appendChild(IssueCatalog.element('span', 'volume-badge', 'In library'));
 	if (!volume.already_added) {
-		const actions = document.createElement('div');
-		actions.className = 'volume-actions';
-		actions.innerHTML = `
-			<button class="volume-action-button icon-dark-color" type="button" aria-label="Add volume">
-				<img src="${url_base}/static/img/download.svg" alt="">
-			</button>
-		`;
-		const actionBtn = actions.querySelector('button');
+		const actions = IssueCatalog.element('div', 'volume-actions');
+			const actionBtn = IssueCatalog.element('button', 'catalog-action', 'Add series');
+		actionBtn.type = 'button';
 		actionBtn.addEventListener('click', event => {
-			event.stopPropagation();
-			event.preventDefault();
 			showAddWindow(volume, actionBtn);
 		});
+		actions.appendChild(actionBtn);
 		card.appendChild(actions);
 	}
 
@@ -194,6 +191,7 @@ function showAddWindow(volume, actionButton) {
 	})
 	.catch(error => {
 		console.error('Error preparing add window:', error);
+		summary.textContent = 'Could not load the series details. Check your metadata API settings and try again.';
 	})
 	.finally(() => {
 		if (actionButton) actionButton.disabled = false;
@@ -232,9 +230,7 @@ function addVolume() {
 	.then(response => response.json())
 	.then(json => {
 		const addedVolumeId = json.result?.id;
-		if (addedVolumeId && currentPublisher) {
-			showPublisherVolumes(currentPublisher);
-		}
+		if (addedVolumeId) loadCurrentView();
 		closeWindow();
 	})
 	.catch(e => {
@@ -250,243 +246,265 @@ function addVolume() {
 	});
 }
 
-// Render publishers
-function renderPublishers(publishers) {
-	publishersGrid.innerHTML = '';
-	loadMoreButton.classList.add('hidden');
-
-	if (publishers.length === 0) {
-		loadingIndicator.classList.add('hidden');
-		emptyState.classList.remove('hidden');
-		emptyState.querySelector('p').textContent = 'No publishers found.';
-		return;
-	}
-
-	emptyState.classList.add('hidden');
-
-	const sorted = [...publishers].sort((a, b) => {
-		if (publisherSortSelect.value === 'name-asc')
-			return a.name.localeCompare(b.name);
-		if (publisherSortSelect.value === 'name-desc')
-			return b.name.localeCompare(a.name);
-		if (publisherSortSelect.value === 'volumes-desc')
-			return (b.volume_count || 0) - (a.volume_count || 0)
-				|| a.name.localeCompare(b.name);
-		const aMajor = MAJOR_PUBLISHERS[a.comicvine_id] ? 0 : 1;
-		const bMajor = MAJOR_PUBLISHERS[b.comicvine_id] ? 0 : 1;
-		if (aMajor !== bMajor) return aMajor - bMajor;
-		return a.name.localeCompare(b.name);
+function publishersInScope() {
+	const publishers = new Map(publisherFacets.map(publisher => [publisher.key, {...publisher}]));
+	allPublishers.forEach(publisher => {
+		const key = IssueCatalog.publisherKey(publisher.name);
+		publishers.set(key, {...publishers.get(key), ...publisher, key});
 	});
-
-	const visible = sorted.slice(0, visiblePublisherCount);
-	publisherCount.innerText = `${visible.length} of ${sorted.length}`;
-	visible.forEach(publisher => {
-		publishersGrid.appendChild(createPublisherCard(publisher));
+	if (currentPublisher && !publishers.has(currentPublisher.key))
+		publishers.set(currentPublisher.key, currentPublisher);
+	return [...publishers.values()].sort((a, b) => {
+		const major = Object.values(MAJOR_PUBLISHERS).map(name => IssueCatalog.publisherKey(name));
+		return Number(major.includes(b.key)) - Number(major.includes(a.key))
+			|| a.name.localeCompare(b.name);
 	});
-	if (visible.length < sorted.length)
-		loadMoreButton.classList.remove('hidden');
-
-	loadingIndicator.classList.add('hidden');
 }
 
-// Render volumes for a publisher
-function renderVolumes(volumes) {
-	volumesGrid.innerHTML = '';
-	loadMoreButton.classList.add('hidden');
-
-	if (volumes.length === 0) {
-		loadingIndicator.classList.add('hidden');
-		emptyState.classList.remove('hidden');
-		emptyState.querySelector('p').textContent = 'No volumes found for this publisher.';
-		return;
-	}
-
-	emptyState.classList.add('hidden');
-
-	const visible = volumes.slice(0, visibleVolumeCount);
-	publisherCount.innerText = `${visible.length} of ${volumes.length}`;
-	visible.forEach(volume => {
-		volumesGrid.appendChild(createVolumeCard(volume));
-	});
-	if (visible.length < volumes.length)
-		loadMoreButton.classList.remove('hidden');
-
-	loadingIndicator.classList.add('hidden');
-}
-
-// Fetch publishers
-function filteredPublishers() {
-	if (!searchQuery) return allPublishers;
-	return allPublishers.filter(publisher =>
-		publisher.name.toLowerCase().includes(searchQuery.toLowerCase())
+function renderPublisherList() {
+	const publishers = publishersInScope();
+	if (currentPublisher)
+		currentPublisher = publishers.find(publisher => publisher.key === currentPublisher.key) || currentPublisher;
+	const total = publisherFacets.reduce((count, publisher) => count + publisher.issue_count, 0);
+	publisherList.replaceChildren(
+		createPublisherCard({key: '', name: 'All publishers', issue_count: total}),
+		...publishers.map(createPublisherCard)
 	);
 }
 
-function fetchPublishers(api_key, forceRefresh=false) {
-	const requestId = ++publisherRequestId;
-	loadingIndicator.classList.remove('hidden');
-	emptyState.classList.add('hidden');
-	publishersGrid.innerHTML = '';
+function setBusy(busy) {
+	loadingIndicator.classList.toggle('hidden', !busy);
+	refreshButton.disabled = busy;
+	loadMoreButton.disabled = busy;
+}
 
-	refreshButton.disabled = true;
-	const params = { limit: 1000 };
-	if (forceRefresh) params.force_refresh = 'true';
+function showEmpty(message) {
+	emptyState.querySelector('p').textContent = message;
+	emptyState.classList.remove('hidden');
+}
 
-	fetchAPI('/publishers', api_key, params)
-	.then(data => {
-		if (requestId !== publisherRequestId) return;
-		if (data.result) {
-			allPublishers = data.result;
-			visiblePublisherCount = 100;
-			renderPublishers(filteredPublishers());
-		} else {
-			throw new Error(data.error || 'Failed to fetch publishers');
-		}
-	})
-	.catch(error => {
-		if (requestId !== publisherRequestId) return;
-		console.error('Error fetching publishers:', error);
-		loadingIndicator.classList.add('hidden');
-		emptyState.classList.remove('hidden');
-		emptyState.querySelector('p').textContent = `Error: ${error.message || 'Failed to fetch publishers'}`;
-	})
-	.finally(() => {
-		if (requestId === publisherRequestId)
-			refreshButton.disabled = false;
+function rememberView() {
+	const params = new URLSearchParams({
+		view: viewSelect.value,
+		period: periodSelect.value,
+		sort: publisherSortSelect.value
+	});
+	if (currentPublisher) {
+		params.set('publisher', currentPublisher.key);
+		params.set('name', currentPublisher.name);
+	}
+	if (searchQuery) params.set('query', searchQuery);
+	if (statusSelect.value) params.set('status', statusSelect.value);
+	history.replaceState(null, '', `${url_base}/publishers?${params}`);
+	setLocalStorage({
+		publisher_view: viewSelect.value,
+		publisher_period: periodSelect.value,
+		publisher_sort: publisherSortSelect.value,
+		publisher_search: searchQuery,
+		publisher_selected: currentPublisher?.key || '',
+		publisher_selected_name: currentPublisher?.name || '',
+		publisher_status: statusSelect.value
 	});
 }
 
-// Show volumes for a specific publisher
-function showPublisherVolumes(publisher, forceRefresh=false) {
-	const requestId = ++volumeRequestId;
-	currentPublisher = publisher;
-	visibleVolumeCount = 100;
-	
-	// Switch views
-	publishersGrid.classList.add('hidden');
-	volumesGrid.classList.remove('hidden');
-	backButton.classList.remove('hidden');
-	currentViewLabel.textContent = publisher.name;
-
-	loadingIndicator.classList.remove('hidden');
-	emptyState.classList.add('hidden');
-	volumesGrid.innerHTML = '';
-	refreshButton.disabled = true;
-
-	usingApiKey()
-	.then(api_key => {
-		const params = { limit: 1000 };
+async function fetchIssues(forceRefresh=false, append=false) {
+	const requestId = ++catalogueRequestId;
+	const nextPage = append ? issuePage + 1 : 1;
+	setBusy(true);
+	if (!append) {
+		emptyState.classList.add('hidden');
+		issuesGrid.replaceChildren();
+		loadMoreButton.classList.add('hidden');
+	}
+	try {
+		const params = {
+			...IssueCatalog.dateRange(periodSelect.value),
+			query: encodeURIComponent(searchQuery),
+			publisher: encodeURIComponent(currentPublisher?.key || ''),
+			local_status: statusSelect.value,
+			sort: publisherSortSelect.value,
+			page: nextPage,
+			per_page: 48
+		};
 		if (forceRefresh) params.force_refresh = 'true';
-		return fetchAPI(
-			`/publishers/${publisher.comicvine_id}/volumes`,
-			api_key,
-			params
+		const data = await fetchAPI('/releases/search', apiKey, params);
+		if (requestId !== catalogueRequestId) return;
+		const result = data.result;
+		publisherFacets = result.publishers;
+		renderPublisherList();
+		currentViewLabel.textContent = currentPublisher?.name || 'All publishers';
+		currentIssues = append ? [...currentIssues, ...result.items] : result.items;
+		issuePage = result.page;
+		if (append)
+			issuesGrid.append(...result.items.map(issue => IssueCatalog.card(issue)));
+		else
+			issuesGrid.replaceChildren(...result.items.map(issue => IssueCatalog.card(issue)));
+		publisherCount.textContent = `${currentIssues.length} of ${result.total} issues`;
+		summary.textContent = `${result.start_date} to ${result.end_date}${searchQuery ? ` - matching "${searchQuery}"` : ''}`;
+		emptyState.classList.toggle('hidden', result.total !== 0);
+		if (!result.total)
+			showEmpty('No matching issues in this release window. Try another range or clear the search; your selected publisher is kept.');
+		loadMoreButton.classList.toggle('hidden', result.page >= result.total_pages);
+	} catch (error) {
+		if (requestId !== catalogueRequestId) return;
+		console.error('Publisher issue catalogue failed:', error);
+		summary.textContent = 'Could not load publisher issues.';
+		showEmpty('Issue discovery could not be loaded. Try Refresh or check the application logs.');
+	} finally {
+		if (requestId === catalogueRequestId) setBusy(false);
+	}
+}
+
+function renderVolumes() {
+	const volumes = [...currentVolumes].sort((a, b) => a.title.localeCompare(b.title));
+	volumesGrid.replaceChildren(...volumes.slice(0, visibleVolumeCount).map(createVolumeCard));
+	publisherCount.textContent = `${Math.min(visibleVolumeCount, volumes.length)} of ${volumes.length} series`;
+	loadMoreButton.classList.toggle('hidden', visibleVolumeCount >= volumes.length);
+	if (!volumes.length)
+		showEmpty('No matching series in the canonical catalogue. Switch to Issues to search publisher listings, including new issues not linked to a library series yet.');
+}
+
+async function fetchSeries(forceRefresh=false) {
+	const requestId = ++catalogueRequestId;
+	setBusy(true);
+	emptyState.classList.add('hidden');
+	volumesGrid.replaceChildren();
+	loadMoreButton.classList.add('hidden');
+	try {
+		if (!publisherCatalogueLoaded || forceRefresh) {
+			const params = {limit: 1000};
+			if (forceRefresh) params.force_refresh = 'true';
+			const publishers = await fetchAPI('/publishers', apiKey, params);
+			if (requestId !== catalogueRequestId) return;
+			allPublishers = publishers.result;
+			publisherCatalogueLoaded = true;
+			renderPublisherList();
+		}
+		let data;
+		if (searchQuery) {
+			data = await fetchAPI('/volumes/search', apiKey, {query: encodeURIComponent(searchQuery)});
+		} else if (currentPublisher?.comicvine_id) {
+			const params = {limit: 1000};
+			if (forceRefresh) params.force_refresh = 'true';
+			data = await fetchAPI(`/publishers/${currentPublisher.comicvine_id}/volumes`, apiKey, params);
+		} else {
+			showEmpty('Choose a publisher or search by series title. To search individual issues or publisher URLs, use Issues.');
+			publisherCount.textContent = '';
+			return;
+		}
+		if (requestId !== catalogueRequestId) return;
+		currentVolumes = data.result.filter(volume =>
+			!currentPublisher || IssueCatalog.publisherKey(volume.publisher) === currentPublisher.key
 		);
-	})
-	.then(data => {
-		if (requestId !== volumeRequestId) return;
-		if (data.result) {
-			currentVolumes = data.result;
-			renderVolumes(currentVolumes);
-		} else {
-			throw new Error(data.error || 'Failed to fetch volumes');
-		}
-	})
-	.catch(error => {
-		if (requestId !== volumeRequestId) return;
-		console.error('Error fetching publisher volumes:', error);
-		loadingIndicator.classList.add('hidden');
-		emptyState.classList.remove('hidden');
-		emptyState.querySelector('p').textContent = `Error: ${error.message || 'Failed to fetch volumes'}`;
-	})
-	.finally(() => {
-		if (requestId === volumeRequestId)
-			refreshButton.disabled = false;
-	});
+		visibleVolumeCount = 48;
+		renderVolumes();
+		summary.textContent = searchQuery
+			? 'Canonical series search results. Publisher issue listings are available in Issues.'
+			: 'Recently updated series from the canonical publisher catalogue (up to 1,000). Search a title for a targeted lookup.';
+	} catch (error) {
+		if (requestId !== catalogueRequestId) return;
+		console.error('Publisher series catalogue failed:', error);
+		summary.textContent = 'The canonical series catalogue is unavailable.';
+		showEmpty('Check your metadata API settings. You can still browse publisher issues without a ComicVine key by switching to Issues.');
+	} finally {
+		if (requestId === catalogueRequestId) setBusy(false);
+	}
 }
 
-// Go back to publishers view
-function showPublishersView() {
-	currentPublisher = null;
-	
-	volumesGrid.classList.add('hidden');
-	publishersGrid.classList.remove('hidden');
-	backButton.classList.add('hidden');
-	currentViewLabel.textContent = '';
-	visiblePublisherCount = 100;
-	renderPublishers(filteredPublishers());
-}
-
-// Search handler
-function handleSearch(e) {
-	e.preventDefault();
+function loadCurrentView(forceRefresh=false) {
+	clearTimeout(searchTimer);
 	searchQuery = searchInput.value.trim();
-	setLocalStorage({publisher_search: searchQuery});
-	visiblePublisherCount = 100;
-	
-	if (currentPublisher) {
-		// If in volumes view, go back to filtered publishers
-		showPublishersView();
-	} else {
-		renderPublishers(filteredPublishers());
-	}
+	document.querySelector('.publisher-workspace').scrollTop = 0;
+	const issues = viewSelect.value === 'issues';
+	currentViewLabel.textContent = currentPublisher?.name || 'All publishers';
+	backButton.classList.toggle('hidden', currentPublisher === null);
+	issuesGrid.classList.toggle('hidden', !issues);
+	volumesGrid.classList.toggle('hidden', issues);
+	periodSelect.disabled = !issues;
+	statusSelect.disabled = !issues;
+	publisherSortSelect.disabled = !issues;
+	searchInput.placeholder = issues ? 'Title, #issue or publisher URL...' : 'Search series titles...';
+	notice.textContent = issues
+		? 'Publisher issue listings are independent of ComicVine. Find a new issue here even when its library series is not available yet. "Find library series" uses the normal add-volume flow.'
+		: 'Series are canonical library entries. Searching stays within your selected publisher; use Issues for individual issue numbers and publisher listings.';
+	renderPublisherList();
+	rememberView();
+	if (issues) return fetchIssues(forceRefresh);
+	return fetchSeries(forceRefresh);
 }
 
-// Clear search
-function clearSearch() {
-	searchInput.value = '';
-	searchQuery = '';
-	setLocalStorage({publisher_search: ''});
-	visiblePublisherCount = 100;
-	
-	if (currentPublisher) {
-		showPublishersView();
-	} else {
-		renderPublishers(allPublishers);
-	}
+function handleSearch(event) {
+	if (event) event.preventDefault();
+	searchQuery = searchInput.value.trim();
+	loadCurrentView();
 }
 
-// Store api_key at module level for use in showPublisherVolumes
-let _apiKey = null;
-
-// Initialize with API key
-usingApiKey()
-.then(api_key => {
-	_apiKey = api_key;
-	if (addWindowEls.form) {
-		addWindowEls.form.action = 'javascript:addVolume();';
-	}
-	const preferences = getLocalStorage('publisher_sort', 'publisher_search');
-	publisherSortSelect.value = preferences.publisher_sort || 'major';
-	searchQuery = preferences.publisher_search || '';
+let apiKey = null;
+usingApiKey().then(key => {
+	if (!key) return;
+	apiKey = key;
+	addWindowEls.form.action = 'javascript:addVolume();';
+	const preferences = getLocalStorage(
+		'publisher_view', 'publisher_period', 'publisher_sort', 'publisher_search',
+		'publisher_selected', 'publisher_selected_name', 'publisher_status'
+	);
+	const params = new URLSearchParams(location.search);
+	const hasURLState = ['view', 'period', 'sort', 'publisher', 'query', 'status']
+		.some(key => params.has(key));
+	const setting = (key, fallback) => params.get(key) ?? (
+		hasURLState ? fallback : preferences[`publisher_${key}`] ?? fallback
+	);
+	viewSelect.value = setting('view', 'issues');
+	periodSelect.value = setting('period', 'recent');
+	publisherSortSelect.value = setting('sort', 'date-desc');
+	statusSelect.value = setting('status', '');
+	if (!viewSelect.value) viewSelect.value = 'issues';
+	if (!periodSelect.value) periodSelect.value = 'recent';
+	if (!publisherSortSelect.value) publisherSortSelect.value = 'date-desc';
+	searchQuery = params.get('query') ?? (hasURLState ? '' : preferences.publisher_search ?? '');
 	searchInput.value = searchQuery;
-
-	refreshButton.addEventListener('click', () => {
-		if (currentPublisher) {
-			showPublisherVolumes(currentPublisher, true);
-		} else {
-			fetchPublishers(api_key, true);
+	const selected = params.get('publisher') ?? (hasURLState ? '' : preferences.publisher_selected);
+	if (selected) {
+		currentPublisher = {
+			key: IssueCatalog.publisherKey(selected),
+			name: params.get('name') || (
+				params.has('publisher') ? selected
+				: preferences.publisher_selected_name || selected
+			)
+		};
+	}
+	refreshButton.onclick = () => loadCurrentView(true);
+	backButton.onclick = () => {
+		currentPublisher = null;
+		loadCurrentView();
+	};
+	searchForm.onsubmit = handleSearch;
+	searchInput.oninput = () => {
+		clearTimeout(searchTimer);
+		searchTimer = setTimeout(handleSearch, 350);
+	};
+	clearSearchBtn.onclick = () => {
+		searchInput.value = '';
+		handleSearch();
+	};
+	[viewSelect, periodSelect, statusSelect, publisherSortSelect].forEach(
+		control => { control.onchange = () => loadCurrentView(); }
+	);
+	loadMoreButton.onclick = () => {
+		if (viewSelect.value === 'issues')
+			fetchIssues(false, true);
+		else {
+			visibleVolumeCount += 48;
+			renderVolumes();
 		}
+	};
+	socketReady.then(socket => {
+		if (!socket) return;
+		socket.on('task_ended', task => {
+			if (task.action === 'update_new_releases' && !task.cancelled
+				&& viewSelect.value === 'issues')
+				fetchIssues();
+		});
 	});
-
-	backButton.addEventListener('click', showPublishersView);
-	searchForm.addEventListener('submit', handleSearch);
-	clearSearchBtn.addEventListener('click', clearSearch);
-	publisherSortSelect.addEventListener('change', () => {
-		setLocalStorage({publisher_sort: publisherSortSelect.value});
-		visiblePublisherCount = 100;
-		if (!currentPublisher) renderPublishers(filteredPublishers());
-	});
-	loadMoreButton.addEventListener('click', () => {
-		if (currentPublisher) {
-			visibleVolumeCount += 100;
-			renderVolumes(currentVolumes);
-		} else {
-			visiblePublisherCount += 100;
-			renderPublishers(filteredPublishers());
-		}
-	});
-
-	// Initial load
-	fetchPublishers(api_key);
+	loadCurrentView();
 });

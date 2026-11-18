@@ -65,6 +65,14 @@ from backend.implementations.naming import (
     generate_volume_folder_name,
     preview_mass_rename,
 )
+from backend.implementations.release_catalog import (
+    CATALOG_SORTS,
+    CATALOG_STATUSES,
+    filter_release_catalog,
+    get_release_catalog,
+    matches_release_query,
+    validate_release_query,
+)
 from backend.implementations.release_discovery import (
     get_discovery_range,
     get_release_discovery,
@@ -1283,16 +1291,8 @@ def _filter_discovery_items(items: List[dict]) -> List[dict]:
     publisher = (request.values.get('publisher') or '').strip().lower()
     local_status = (request.values.get('local_status') or '').strip()
     provider = (request.values.get('provider') or '').strip()
-    text_query = (request.values.get('query') or '').strip().lower()
-    allowed_statuses = {
-        'downloaded',
-        'missing_monitored',
-        'missing_unmonitored',
-        'metadata_pending',
-        'not_in_library',
-        'ambiguous'
-    }
-    if local_status and local_status not in allowed_statuses:
+    text_query = (request.values.get('query') or '').strip()
+    if local_status and local_status not in CATALOG_STATUSES:
         raise InvalidKeyValue('local_status', local_status)
 
     def publisher_matches(item: dict) -> bool:
@@ -1320,9 +1320,48 @@ def _filter_discovery_items(items: List[dict]) -> List[dict]:
         )
         and (
             not text_query
-            or text_query in item.get('series_title', '').lower()
+            or matches_release_query(item, text_query)
         )
     ]
+
+
+@api.route('/releases/search', methods=['GET'])
+@error_handler
+@auth
+def api_release_search():
+    default_start, default_end = get_discovery_range()
+    start_date = request.values.get('start_date') or default_start
+    end_date = request.values.get('end_date') or default_end
+    _validate_release_range(start_date, end_date)
+    sort = request.values.get('sort', 'date-desc')
+    local_status = request.values.get('local_status', '')
+    if sort not in CATALOG_SORTS:
+        raise InvalidKeyValue('sort', sort)
+    if local_status and local_status not in CATALOG_STATUSES:
+        raise InvalidKeyValue('local_status', local_status)
+    page = _metadata_int_param('page', 1, 10000)
+    per_page = _metadata_int_param('per_page', 48, 100)
+    force_refresh = _force_metadata_refresh()
+    query = (request.values.get('query') or '').strip()
+    validate_release_query(query)
+
+    records = run(get_release_catalog(
+        start_date, end_date, force_refresh=force_refresh
+    ))
+    _update_new_releases()
+    return return_api({
+        **filter_release_catalog(
+            records,
+            query=query,
+            publisher=(request.values.get('publisher') or '').strip(),
+            local_status=local_status,
+            sort=sort,
+            page=page,
+            per_page=per_page
+        ),
+        'start_date': start_date,
+        'end_date': end_date
+    })
 
 
 @api.route('/releases/discovery', methods=['GET'])
