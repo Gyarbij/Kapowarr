@@ -20,8 +20,9 @@ announcements with issues already in your library. It does not depend on
 ComicVine's series search. A newly released issue can therefore be found even
 when ComicVine has not listed its series yet.
 
-Search a title, an issue reference such as `X-Orcists #1`, an issue title, or
-an exact publisher issue URL. Punctuation differences such as `X-Orcists` and
+Search a title, an issue reference such as `X-Orcists #1`, an issue title,
+a source-qualified issue ID such as `marvel:132266` or `comicvine:700`, or an
+exact publisher issue URL. Punctuation differences such as `X-Orcists` and
 `X Orcists` do not prevent a match. Issue numbers are matched exactly, so
 `#1` does not match `#10`.
 
@@ -45,17 +46,55 @@ credentials are missing or the series catalogue is unavailable.
 
 Add Volume also shows a separate **Publisher and library issues** result
 section. It supports the same issue references and URLs, even if the
-ComicVine search returns no series or reports an invalid API key. These are
-independent results, not provisional library entries: adding a volume still
-requires confirmed canonical metadata. No publisher ID is stored as a
-ComicVine ID, and finding a listing does not automatically add or download it.
+ComicVine search returns no series or reports an invalid API key.
+**Add from publisher** creates a managed volume and issue from a stored
+publisher/distributor record. Choose a root folder and monitoring settings,
+and optionally start the normal download search immediately. Finding a
+listing alone does not add or download anything.
+
+## Publisher And ComicVine Identities
+
+Local volume and issue IDs identify your library entries. Source IDs are
+separate, namespaced identities: for example, `marvel:132266` is not
+`comicvine:132266`. A publisher-backed issue can be managed, monitored,
+file-matched and searched for downloads while its ComicVine ID is absent.
+Publisher feeds that only expose issue IDs keep them at issue level; issue
+IDs are never passed off as series IDs.
+
+When ComicVine catches up, reconciliation attaches its IDs to the existing
+entries. Local IDs, folders, file links, monitoring, queue references and
+activity history are preserved. Repeating an addition does not create another
+entry. Adding a matching ComicVine series later also reuses a uniquely
+verified publisher-backed entry instead of making a second volume.
+
+The Refresh Release Discovery task checks unresolved publisher-backed series,
+normally spacing retries by six hours. New publisher issues and
+**Refresh & Scan** can trigger an earlier retry. On a
+volume page, expand **Metadata IDs and reconciliation** to see both ID sets
+and trigger a check, optionally specifying a ComicVine volume ID.
+
+Automatic linking requires a unique title/alias, publisher and compatible
+series-year/issue-date match. Ambiguous candidates and IDs already owned by
+another library volume are reported for review; separate library volumes are
+not silently merged. Existing source IDs are also used for matching after a
+canonical title changes.
+
+Reconciliation does not rename existing folders. Naming templates that require
+a ComicVine ID use the normal `Unknown` value until that ID is available.
+
+Adding from a publisher opts that series into publisher metadata updates.
+New issues from compatible listings can then be added before ComicVine has
+them, using the series' existing Monitor New Issues setting. Already matched
+canonical issues can gain corroborating publisher IDs without enabling
+automatic publisher-only additions to every series.
 
 ## Supplemental Discovery
 
 Choose 'Discovery' to combine dated publisher/distributor listings with actual
 GetComics availability. Records show every source that contributed to the
 match, whether the issue is available, and its local status. The sources are
-supplemental; ComicVine or Metron remains canonical.
+supplemental to canonical catalogue results. Publisher-backed entries can
+operate before ComicVine is available and reconcile with it later.
 
 | Source | Covers | Notes |
 | --- | --- | --- |
@@ -86,8 +125,9 @@ issue is not yet in its canonical metadata. Kapowarr refreshes that volume
 right away, and again later if the metadata source doesn't list the issue yet;
 more often as the date that it comes out gets closer. When Refresh Release
 Discovery brings an issue in that is out, it's searched for in the same run if
-it's monitored. Kapowarr does not create a provisional issue. Ambiguous,
-unmonitored, and unknown items remain review-only.
+it's monitored. Publisher-backed library entries do not have to wait for a ComicVine issue
+to exist. Ambiguous and unknown matches remain review-only; unmonitored
+issues are not automatically searched.
 
 Each supplemental provider fails independently, and so does each week of a
 provider. Previously fetched records remain available if a source is blocked

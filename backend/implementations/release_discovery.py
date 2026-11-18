@@ -314,6 +314,7 @@ def enrich_discovery_records(
             'id': row['volume_id'],
             'title': row['title'],
             'alt_title': row.get('alt_title'),
+            'source_titles': row.get('source_titles', []),
             'year': row.get('volume_year'),
             'publisher': row.get('publisher'),
             'monitored': bool(row.get('volume_monitored')),
@@ -322,10 +323,12 @@ def enrich_discovery_records(
         if row.get('issue_id') is not None:
             volume['issues'].append({
                 'id': row['issue_id'],
+                'comicvine_id': row.get('issue_comicvine_id'),
                 'number': row['calculated_issue_number'],
                 'date': row.get('issue_date'),
                 'monitored': bool(row.get('issue_monitored')),
-                'downloaded': bool(row.get('downloaded'))
+                'downloaded': bool(row.get('downloaded')),
+                'source_ids': row.get('source_ids', [])
             })
 
     # Volumes are found by their title, instead of comparing the title of
@@ -335,12 +338,18 @@ def enrich_discovery_records(
         volume['publisher_family'] = _publisher_family(volume['publisher'])
         for title in {
             _clean_match_title(title)
-            for title in (volume['title'], volume['alt_title'])
+            for title in (volume['title'], volume['alt_title'], *volume['source_titles'])
             if title
         }:
             volumes_by_title.setdefault(title, []).append(volume)
 
     enriched = []
+    issues_by_source = {
+        (identity['source'], identity['source_id']): (volume, issue)
+        for volume in volumes.values()
+        for issue in volume['issues']
+        for identity in issue['source_ids']
+    }
     for record in records:
         publisher_family = _publisher_family(record.get('publisher'))
         candidate_volumes = [
@@ -362,6 +371,15 @@ def enrich_discovery_records(
             if issue['number'] == record.get('calculated_issue_number')
             and _issue_year_matches(record, issue['date'])
         ]
+        identity_matches = {
+            match[1]['id']: match
+            for source in record.get('provenance', ())
+            if (match := issues_by_source.get((
+                source['provider'], str(source.get('external_id') or '')
+            ))) is not None
+        }
+        if identity_matches:
+            exact_issues = list(identity_matches.values())
 
         local_volume_id = None
         local_issue_id = None
@@ -405,7 +423,14 @@ def enrich_discovery_records(
             'local_status': local_status,
             'match_reason': match_reason,
             'local_volume_id': local_volume_id,
-            'local_issue_id': local_issue_id
+            'local_issue_id': local_issue_id,
+            'metadata_origin': (
+                'publisher'
+                if len(exact_issues) == 1
+                and exact_issues[0][1]['comicvine_id'] is None
+                and exact_issues[0][1]['source_ids']
+                else 'comicvine'
+            )
         })
 
     return enriched
@@ -671,7 +696,7 @@ def _read_discovery_records(
 
 
 def get_discovery_library_rows() -> List[dict]:
-    return get_db().execute("""
+    rows = get_db().execute("""
         SELECT
             v.id AS volume_id,
             v.title,
@@ -680,6 +705,7 @@ def get_discovery_library_rows() -> List[dict]:
             v.publisher,
             v.monitored AS volume_monitored,
             i.id AS issue_id,
+            i.comicvine_id AS issue_comicvine_id,
             i.calculated_issue_number,
             i.date AS issue_date,
             i.monitored AS issue_monitored,
@@ -690,6 +716,30 @@ def get_discovery_library_rows() -> List[dict]:
         FROM volumes v
         LEFT JOIN issues i ON i.volume_id = v.id;
     """).fetchalldict()
+    identities: Dict[int, List[dict]] = {}
+    source_titles: Dict[int, set] = {}
+    issue_volumes = {
+        row['issue_id']: row['volume_id'] for row in rows
+        if row['issue_id'] is not None
+    }
+    for identity in get_db().execute("""
+        SELECT s.issue_id, s.source, s.source_id, d.series_title
+        FROM issue_source_ids s
+        LEFT JOIN release_discovery d
+            ON d.provider = s.source AND d.external_id = s.source_id;
+    """).fetchalldict():
+        identities.setdefault(identity['issue_id'], []).append(identity)
+        if identity['series_title'] and identity['issue_id'] in issue_volumes:
+            source_titles.setdefault(
+                issue_volumes[identity['issue_id']], set()
+            ).add(identity['series_title'])
+    titles_by_volume = {
+        volume_id: sorted(titles) for volume_id, titles in source_titles.items()
+    }
+    for row in rows:
+        row['source_ids'] = identities.get(row['issue_id'], [])
+        row['source_titles'] = titles_by_volume.get(row['volume_id'], ())
+    return rows
 
 
 def _update_pending_watches(records: List[dict]) -> None:
@@ -697,7 +747,11 @@ def _update_pending_watches(records: List[dict]) -> None:
     now = round(time())
     for record in records:
         if (
-            record['local_status'] == 'metadata_pending'
+            (
+                record['local_status'] == 'metadata_pending'
+                or record.get('metadata_origin') == 'publisher'
+                and record['local_status'] == 'missing_monitored'
+            )
             and record['local_volume_id'] is not None
         ):
             cursor.execute("""
@@ -753,5 +807,10 @@ async def get_release_discovery(
         merged,
         get_discovery_library_rows()
     )
+    from backend.implementations.metadata_ids import sync_discovery_ids
+    if sync_discovery_ids(enriched):
+        enriched = enrich_discovery_records(
+            merged, get_discovery_library_rows()
+        )
     _update_pending_watches(enriched)
     return enriched

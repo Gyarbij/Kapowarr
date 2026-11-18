@@ -7,6 +7,7 @@ from urllib.parse import unquote, urlsplit
 
 from backend.base.custom_exceptions import InvalidKeyValue
 from backend.base.helpers import normalise_query_string
+from backend.implementations.metadata_ids import PUBLISHER_SOURCES
 from backend.implementations.release_discovery import (_publisher_family,
                                                        get_release_discovery)
 from backend.internals.db import get_db
@@ -65,6 +66,18 @@ def matches_release_query(record: dict, query: str) -> bool:
             for url in urls if url
         )
 
+    source, separator, identifier = query.partition(':')
+    identities = {
+        (item['provider'], str(item.get('external_id') or ''))
+        for item in record.get('provenance', ())
+    }
+    if record.get('comicvine_issue_id') is not None:
+        identities.add(('comicvine', str(record['comicvine_issue_id'])))
+    if record.get('local_issue_id') is not None:
+        identities.add(('library', str(record['local_issue_id'])))
+    if separator and source.casefold() in PUBLISHER_SOURCES | {'comicvine', 'library'}:
+        return (source.casefold(), identifier.strip()) in identities
+
     year = series_year_regex.search(query)
     if year:
         record_year = record.get('series_year') or record.get('issue_year')
@@ -101,7 +114,7 @@ async def get_release_catalog(
     )
     rows = get_db().execute("""
         SELECT
-            i.id, i.issue_number, i.calculated_issue_number,
+            i.id, i.comicvine_id, i.issue_number, i.calculated_issue_number,
             i.title AS issue_title, COALESCE(i.store_date, i.date) AS release_date,
             v.id AS volume_id, v.title AS series_title, v.year AS series_year,
             v.publisher, v.monitored AS volume_monitored,
@@ -122,6 +135,7 @@ async def get_release_catalog(
         local = local_issues.get(record.get('local_issue_id'))
         if local is not None:
             item['issue_title'] = local['issue_title']
+            item['comicvine_issue_id'] = local['comicvine_id']
             item['providers'] = [
                 *item['providers'], 'library'
             ]
@@ -145,6 +159,7 @@ async def get_release_catalog(
             'issue_number': row['issue_number'],
             'calculated_issue_number': row['calculated_issue_number'],
             'issue_title': row['issue_title'],
+            'comicvine_issue_id': row['comicvine_id'],
             'release_date': row['release_date'],
             'providers': ['library'],
             'provenance': [],

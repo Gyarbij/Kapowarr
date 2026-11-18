@@ -40,6 +40,7 @@
 {% endblock pre_build_els %}
 
 {% block windows %}
+	{% include "source_add_window.html" %}
 	{{ loading_window("loading-window", "Adding volume...") }}
 
 	{% set add_content %}
@@ -152,7 +153,7 @@
 		</section>
 		<section id="publisher-issue-results" class="hidden" aria-label="Publisher issue results">
 			<h2>Publisher and library issues</h2>
-			<p class="catalog-notice">These listings are searched independently of ComicVine. A publisher listing can be found before its library series is available; adding a volume still needs a confirmed ComicVine series.</p>
+			<p class="catalog-notice">Publisher listings can be added directly using their source IDs, even before ComicVine lists the series. Reconciliation links the IDs later without replacing your library entry.</p>
 			<p id="publisher-issue-message" role="status" aria-live="polite"></p>
 			<div id="publisher-issue-list" class="issue-catalog-grid"></div>
 			<a id="publisher-issue-more" class="catalog-source-link hidden">Browse all matching issues</a>

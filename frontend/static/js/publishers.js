@@ -425,7 +425,7 @@ function loadCurrentView(forceRefresh=false) {
 	publisherSortSelect.disabled = !issues;
 	searchInput.placeholder = issues ? 'Title, #issue or publisher URL...' : 'Search series titles...';
 	notice.textContent = issues
-		? 'Publisher issue listings are independent of ComicVine. Find a new issue here even when its library series is not available yet. "Find library series" uses the normal add-volume flow.'
+		? 'Add directly from a publisher listing before ComicVine catches up. Publisher and ComicVine IDs are linked to stable local library entries.'
 		: 'Series are canonical library entries. Searching stays within your selected publisher; use Issues for individual issue numbers and publisher listings.';
 	renderPublisherList();
 	rememberView();

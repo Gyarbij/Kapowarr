@@ -14,6 +14,63 @@ class DatabaseMigrationReconciliationTest(unittest.TestCase):
     def tearDown(self):
         self.connection.close()
 
+    def test_namespaced_ids_migration_preserves_references_and_indexes(self):
+        old_schema = DB_SCHEMA.replace(
+            'comicvine_id INTEGER,', 'comicvine_id INTEGER NOT NULL,', 1
+        ).replace(
+            'comicvine_id INTEGER UNIQUE,',
+            'comicvine_id INTEGER NOT NULL UNIQUE,', 1
+        )
+        self.connection.executescript(old_schema + DB_SCHEMA_INDEXES)
+        self.connection.executescript("""
+            PRAGMA foreign_keys = ON;
+            INSERT INTO root_folders(id, folder) VALUES (1, '/comics');
+            INSERT INTO volumes(id, comicvine_id, title, root_folder, folder)
+            VALUES (5, 500, 'Existing volume', 1, '/comics/kept');
+            INSERT INTO issues(
+                id, volume_id, comicvine_id, issue_number,
+                calculated_issue_number, monitored
+            ) VALUES (7, 5, 700, '1', 1.0, 0);
+            INSERT INTO files(id, filepath, size) VALUES (9, '/comics/kept/1.cbz', 10);
+            INSERT INTO issues_files(issue_id, file_id) VALUES (7, 9);
+            CREATE INDEX custom_issue_index ON issues(title);
+        """)
+        with patch.object(
+            db_migration, 'get_db', return_value=self.connection.cursor()
+        ):
+            db_migration._migrate_namespaced_metadata_ids()
+            db_migration._migrate_namespaced_metadata_ids()
+
+        self.assertEqual(self.connection.execute(
+            'SELECT issue_id, file_id FROM issues_files;'
+        ).fetchall(), [(7, 9)])
+        self.assertEqual(self.connection.execute(
+            'SELECT id, comicvine_id, monitored FROM issues;'
+        ).fetchall(), [(7, 700, 0)])
+        self.assertEqual(self.connection.execute(
+            'PRAGMA foreign_key_check;'
+        ).fetchall(), [])
+        self.assertEqual(self.connection.execute(
+            'PRAGMA foreign_keys;'
+        ).fetchone()[0], 1)
+        self.assertIsNotNone(self.connection.execute(
+            "SELECT name FROM sqlite_master WHERE name='custom_issue_index';"
+        ).fetchone())
+        self.assertEqual(self.connection.execute(
+            'SELECT volume_id, source, source_id FROM volume_source_ids;'
+        ).fetchall(), [(5, 'comicvine', '500')])
+        self.assertEqual(self.connection.execute(
+            'SELECT issue_id, source, source_id FROM issue_source_ids;'
+        ).fetchall(), [(7, 'comicvine', '700')])
+        self.connection.execute("""
+            INSERT INTO volumes(id, title, root_folder)
+            VALUES (6, 'Publisher volume', 1);
+        """)
+        self.connection.execute("""
+            INSERT INTO issues(volume_id, issue_number, calculated_issue_number)
+            VALUES (6, '1', 1.0);
+        """)
+
     def _create_common_tables(self, created_at=False, forced=False):
         created_at_column = (
             ', created_at INTEGER NOT NULL DEFAULT 0'

@@ -180,7 +180,11 @@ function fillPage(data, api_key) {
 	};
 
 	// Cover
-	ViewEls.vol_data.cover.src = `${url_base}/api/volumes/${data.id}/cover?api_key=${api_key}`;
+	const publisherCover = data.metadata_ids?.cover_url;
+	ViewEls.vol_data.cover.src = data.comicvine_id === null
+		&& typeof publisherCover === 'string' && /^https?:\/\//.test(publisherCover)
+		? publisherCover
+		: `${url_base}/api/volumes/${data.id}/cover?api_key=${api_key}`;
 
 	// Monitored state
 	ViewEls.vol_edit.monitor_new_issues.value = data.monitor_new_issues;
@@ -199,6 +203,12 @@ function fillPage(data, api_key) {
 
 	// Tags
 	const tags = ViewEls.vol_data.tags;
+	tags.replaceChildren();
+	if (data.comicvine_id === null) {
+		const origin = document.createElement('p');
+		origin.textContent = 'Publisher-backed';
+		tags.appendChild(origin);
+	}
 	if (data.year !== null) {
 		const year = document.createElement('p');
 		year.innerText = data.year;
@@ -218,6 +228,42 @@ function fillPage(data, api_key) {
 		link.href = data.site_url;
 		link.innerText = "link";
 		tags.appendChild(link);
+	};
+	const identities = data.metadata_ids || {volumes: [], issues: []};
+	const identityList = document.getElementById('metadata-identity-list');
+	identityList.replaceChildren();
+	[
+		...identities.volumes.map(identity => ({...identity, entity: 'Series'})),
+		...identities.issues.map(identity => ({...identity, entity: `Issue #${identity.issue_number}`}))
+	].slice(0, 100).forEach(identity => {
+		const item = document.createElement('li');
+		item.textContent = `${identity.entity} - ${identity.source}: ${identity.source_id}`;
+		identityList.appendChild(item);
+	});
+	const identityStatus = document.getElementById('metadata-identity-status');
+	identityStatus.textContent = identities.reconciliation?.message
+		|| (data.comicvine_id === null ? 'Publisher metadata; awaiting ComicVine reconciliation.' : 'ComicVine metadata linked.');
+	if (identities.pending_issues)
+		identityStatus.textContent += ` ${identities.pending_issues} issue(s) await ComicVine IDs.`;
+	document.getElementById('reconcile-metadata').onclick = async event => {
+		const button = event.currentTarget;
+		button.disabled = true;
+		identityStatus.textContent = 'Checking ComicVine for a verified match...';
+		const value = document.getElementById('metadata-comicvine-id').value;
+		try {
+			const response = await sendAPI('POST', `/volumes/${volume_id}/metadata-ids`, api_key, {},
+				value ? {comicvine_id: Number(value)} : {});
+			const result = (await response.json()).result;
+			identityStatus.textContent = result.message;
+			if (result.candidate_ids.length)
+				identityStatus.textContent += ` Candidates: ${result.candidate_ids.join(', ')}.`;
+			if (result.status === 'linked') window.location.reload();
+		} catch (error) {
+			console.error('Metadata reconciliation failed:', error);
+			identityStatus.textContent = 'Reconciliation failed. Check metadata credentials and the candidate ID; the existing library entry has been kept.';
+		} finally {
+			button.disabled = false;
+		}
 	};
 	
 	// Path

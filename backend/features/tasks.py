@@ -838,6 +838,9 @@ class RefreshReleaseDiscovery(Task):
             get_discovery_range,
             get_release_discovery,
         )
+        from backend.implementations.metadata_ids import (
+            pending_reconciliation_volumes, refresh_publisher_volumes,
+        )
 
         self.message = 'Refreshing supplemental release discovery'
         WebSocket().emit(TaskStatusEvent(self.message))
@@ -847,23 +850,34 @@ class RefreshReleaseDiscovery(Task):
                 'SELECT record_key FROM pending_release_watches;'
             )
         }
+        publisher_ids = pending_reconciliation_volumes()
+        self.volume_ids = set(publisher_ids)
+        publisher_updated = refresh_publisher_volumes(publisher_ids)
         today = date.today().isoformat()
         date_range = get_discovery_range()
         items = async_run(get_release_discovery(
             *date_range,
             background=True
         ))
+        pending_keys.update(
+            item['record_key'] for item in items
+            if item.get('metadata_origin') == 'publisher'
+        )
 
         # Volumes with an announced release that their metadata doesn't have
         # are refreshed now, instead of waiting until the library update gets
         # to them. Then the issues that it brought in can be searched for.
         if not self.stop:
-            self.volume_ids = find_volumes_with_new_releases()
+            release_ids = find_volumes_with_new_releases()
+            self.volume_ids.update(release_ids)
+        else:
+            return []
 
-        if refresh_release_volumes(
-            self.volume_ids,
+        release_updated = refresh_release_volumes(
+            release_ids,
             stop_check=lambda: self.stop
-        ):
+        )
+        if publisher_updated or release_updated:
             pending_keys.update(
                 item['record_key']
                 for item in items

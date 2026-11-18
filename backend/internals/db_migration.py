@@ -2,6 +2,7 @@
 
 from asyncio import run
 from datetime import datetime
+from re import IGNORECASE, subn
 from typing import Callable, Dict, List
 
 from backend.base.logging import LOGGER
@@ -1532,3 +1533,92 @@ def _migrate_add_pending_release_date():
                 ADD COLUMN release_date VARCHAR(10);
         """)
     return
+
+
+@DatabaseMigrationHandler.register_handler(53)
+def _migrate_namespaced_metadata_ids():
+    """Keep local IDs and all their references while allowing missing CV IDs."""
+    from backend.internals.db import SOURCE_ID_SCHEMA
+
+    connection = get_db().connection
+    connection.commit()
+    for table in ('volumes', 'issues'):
+        duplicate = connection.execute(f"""
+            SELECT comicvine_id FROM {table}
+            WHERE comicvine_id IS NOT NULL
+            GROUP BY comicvine_id HAVING COUNT(*) > 1 LIMIT 1;
+        """).fetchone()
+        if duplicate:
+            raise RuntimeError(
+                f'Duplicate ComicVine ID {duplicate[0]} in {table}; '
+                'resolve duplicate library entries before linking source IDs'
+            )
+    foreign_keys = connection.execute('PRAGMA foreign_keys;').fetchone()[0]
+    legacy_alter = connection.execute('PRAGMA legacy_alter_table;').fetchone()[0]
+    connection.execute('PRAGMA foreign_keys = OFF;')
+    connection.execute('PRAGMA legacy_alter_table = ON;')
+    try:
+        connection.execute('BEGIN;')
+        for table in ('volumes', 'issues'):
+            columns = connection.execute(
+                f'PRAGMA table_info({table});'
+            ).fetchall()
+            if not any(row[1] == 'comicvine_id' and row[3] for row in columns):
+                continue
+            definition = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?;",
+                (table,)
+            ).fetchone()[0]
+            definition, changes = subn(
+                r'(\bcomicvine_id\s+INTEGER)\s+NOT\s+NULL\b',
+                r'\1', definition[definition.index('('):],
+                count=1, flags=IGNORECASE
+            )
+            if changes != 1:
+                raise RuntimeError(f'Cannot migrate {table}.comicvine_id')
+            indexes_and_triggers = connection.execute("""
+                SELECT sql FROM sqlite_master
+                WHERE tbl_name = ? AND type IN ('index', 'trigger')
+                    AND sql IS NOT NULL;
+            """, (table,)).fetchall()
+            replacement = f'metadata_{table}'
+            connection.execute(f'CREATE TABLE {replacement} {definition}')
+            connection.execute(
+                f'INSERT INTO {replacement} SELECT * FROM {table};'
+            )
+            connection.execute(f'DROP TABLE {table};')
+            connection.execute(f'ALTER TABLE {replacement} RENAME TO {table};')
+            for (sql,) in indexes_and_triggers:
+                connection.execute(sql)
+
+        for statement in SOURCE_ID_SCHEMA.split(';'):
+            if statement.strip():
+                connection.execute(statement)
+        for table, mapping, entity in (
+            ('volumes', 'volume_source_ids', 'volume'),
+            ('issues', 'issue_source_ids', 'issue')
+        ):
+            connection.execute(f"""
+                INSERT INTO {mapping}(
+                    {entity}_id, source, source_id, matched_at
+                )
+                SELECT id, 'comicvine', CAST(comicvine_id AS TEXT),
+                    CAST(strftime('%s', 'now') AS INTEGER)
+                FROM {table}
+                WHERE comicvine_id IS NOT NULL
+                    AND NOT EXISTS (
+                        SELECT 1 FROM {mapping}
+                        WHERE source = 'comicvine'
+                            AND source_id = CAST({table}.comicvine_id AS TEXT)
+                            AND {entity}_id = {table}.id
+                    );
+            """)
+        if connection.execute('PRAGMA foreign_key_check;').fetchone():
+            raise RuntimeError('Foreign-key violation during metadata migration')
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.execute(f'PRAGMA legacy_alter_table = {legacy_alter};')
+        connection.execute(f'PRAGMA foreign_keys = {foreign_keys};')

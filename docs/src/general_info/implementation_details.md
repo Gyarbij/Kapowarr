@@ -22,7 +22,9 @@ The Refresh Releases and Refresh Release Discovery tasks do this every time they
 
 Only volumes for which there is something new are refreshed, and release data is only acted on when it is newer than the last refresh of the volume. So a volume is not refreshed over and over again for the same release. If a refresh could not be done, for example because the rate limit was hit, then opening a page doesn't start another one for that volume for an hour. The release tasks do try again.
 
-Volumes in the library are tied to ComicVine. When Metron is the metadata source, its releases and publisher listings can't be linked to volumes in the library, so only the announcements of supplemental sources lead to a refresh.
+Library IDs are independent of metadata sources. Publisher-backed entries may have no ComicVine ID until reconciliation, but already use the normal monitoring, scanning, matching and download paths. Namespaced publisher and ComicVine IDs can then identify the same local issue without changing its local ID or file links. See [Publisher and ComicVine identities](releases.md#publisher-and-comicvine-identities).
+
+ComicVine remains the reconciliation target for managed library metadata. Metron's release and publisher caches have their own namespace; their numeric IDs are not treated as ComicVine IDs.
 
 ## Special Version and annuals
 

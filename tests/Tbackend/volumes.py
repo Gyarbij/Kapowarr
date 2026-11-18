@@ -20,6 +20,7 @@ from backend.implementations.volumes import (
     determine_special_version,
     refresh_and_scan,
 )
+from backend.internals.db import SOURCE_ID_SCHEMA
 
 
 class ActivityMutationTest(unittest.TestCase):
@@ -351,6 +352,7 @@ class RefreshAndScanTest(unittest.TestCase):
                 store_date, description, monitored
             );
         """)
+        self.cursor.executescript(SOURCE_ID_SCHEMA)
         self.addCleanup(self.connection.close)
 
     def _refresh(self, volume_datas, issue_datas):
@@ -385,6 +387,9 @@ class RefreshAndScanTest(unittest.TestCase):
         module = 'backend.implementations.volumes.'
         with patch(
             module + 'get_db', return_value=self.cursor
+        ), patch(
+            'backend.implementations.metadata_ids.get_db',
+            return_value=self.cursor
         ), patch(
             module + 'ComicVine', return_value=metadata_source
         ), patch(

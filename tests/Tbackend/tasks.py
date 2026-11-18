@@ -24,6 +24,12 @@ class TaskFlowTest(unittest.TestCase):
         attempts_patch = patch.dict(UpdateNewReleases.last_attempts, clear=True)
         attempts_patch.start()
         self.addCleanup(attempts_patch.stop)
+        for name in ('pending_reconciliation_volumes', 'refresh_publisher_volumes'):
+            reconciliation_patch = patch(
+                f'backend.implementations.metadata_ids.{name}', return_value=[]
+            )
+            reconciliation_patch.start()
+            self.addCleanup(reconciliation_patch.stop)
 
     @staticmethod
     def _handler():

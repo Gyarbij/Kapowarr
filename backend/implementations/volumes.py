@@ -42,6 +42,7 @@ from backend.base.definitions import (
     MonitorScheme,
     SpecialVersion,
     VolumeData,
+    VolumeMetadata,
     VolumeSearchMatch,
 )
 from backend.base.files import (
@@ -297,7 +298,7 @@ class Issue:
     def delete(self) -> None:
         """Delete the issue from the database"""
         LOGGER.debug(
-            "Deleting issue %d with CV ID %d",
+            "Deleting issue %d with CV ID %s",
             self.id, self.get_data().comicvine_id
         )
         FilesDB.delete_issue_linked_files(self.id)
@@ -422,6 +423,8 @@ class Volume:
         volume_info['issues'] = [i.todict() for i in self.get_issues()]
         volume_info['general_files'] = self.get_general_files()
         volume_info['series_match'] = self.get_search_match()
+        from backend.implementations.metadata_ids import get_metadata_identity_data
+        volume_info['metadata_ids'] = get_metadata_identity_data(self.id)
 
         return volume_info
 
@@ -1767,8 +1770,6 @@ class Library:
         Returns:
             int: The ID of the new volume.
         """
-        from backend.implementations.naming import generate_volume_folder_path
-
         LOGGER.info(
             'Adding a volume to the library: '
             'CV ID %d, RF ID %d, M %s, MS %s, MNI %s, VF %s, SV %s',
@@ -1786,9 +1787,55 @@ class Library:
             raise VolumeAlreadyAdded(comicvine_id, potential_volume_id)
 
         # Raises RootFolderNotFound when ID is invalid
-        root_folder = RootFolders().get_one(root_folder_id)
+        RootFolders().get_one(root_folder_id)
 
-        vd = run(ComicVine().fetch_volume(comicvine_id))
+        cv = ComicVine()
+        vd = run(cv.fetch_volume(comicvine_id))
+        from backend.implementations.metadata_ids import (
+            publisher_volumes_matching, reconcile_comicvine,
+        )
+        publisher_matches = publisher_volumes_matching(vd)
+        if publisher_matches:
+            if len(publisher_matches) != 1:
+                raise InvalidKeyValue('comicvine_id', 'Multiple publisher-backed series match')
+            existing_id = publisher_matches[0]
+            result = reconcile_comicvine(
+                existing_id, candidate_id=comicvine_id, client=cv, metadata=vd
+            )
+            commit()
+            if result['status'] != 'linked':
+                raise InvalidKeyValue('comicvine_id', result['message'])
+            return existing_id
+        return cls.add_metadata(
+            vd, root_folder_id, monitored, monitor_scheme, monitor_new_issues,
+            volume_folder, special_version, auto_search
+        )
+
+    @classmethod
+    def add_metadata(
+        cls,
+        vd: VolumeMetadata,
+        root_folder_id: int,
+        monitored: bool,
+        monitor_scheme: MonitorScheme = MonitorScheme.ALL,
+        monitor_new_issues: bool = True,
+        volume_folder: Union[str, None] = None,
+        special_version: Union[SpecialVersion, None] = None,
+        auto_search: bool = False
+    ) -> int:
+        """Create a library entry from verified metadata, keeping local IDs."""
+        from backend.implementations.metadata_ids import (
+            bind_source_id, comicvine_identity, upsert_issue_metadata,
+        )
+        from backend.implementations.naming import generate_volume_folder_path
+
+        root_folder = RootFolders().get_one(root_folder_id)
+        comicvine_id = vd['comicvine_id']
+        if comicvine_id is None and not (
+            vd.get('source_ids')
+            or any(issue.get('source_ids') for issue in vd['issues'] or ())
+        ):
+            raise InvalidKeyValue('source_id', 'Publisher metadata needs a source identity')
 
         cursor = get_db()
         with cursor:
@@ -1834,11 +1881,16 @@ class Library:
                     "root_folder": root_folder.id,
                     "custom_folder": volume_folder is not None,
                     "created_at": round(time()),
-                    "last_cv_fetch": round(time()),
+                    "last_cv_fetch": round(time()) if comicvine_id is not None else 0,
                     "special_version": None,
                     "special_version_locked": special_version is not None
                 }
             ).lastrowid
+            identities = list(vd.get('source_ids', ()))
+            if comicvine_id is not None:
+                identities.append(comicvine_identity(comicvine_id))
+            for identity in identities:
+                bind_source_id('volume', volume_id, identity)
 
             cursor.execute(
                 """
@@ -1851,42 +1903,22 @@ class Library:
                 }
             )
 
-            cursor.executemany("""
-                INSERT INTO issues(
-                    volume_id,
-                    comicvine_id,
-                    issue_number,
-                    calculated_issue_number,
-                    title,
-                    date,
-                    description,
-                    monitored
-                ) VALUES (
-                    :volume_id, :comicvine_id,
-                    :issue_number, :calculated_issue_number,
-                    :title, :date, :description,
-                    :monitored
-                );
-                """,
-                (
-                    {
-                        "volume_id": volume_id,
-                        "comicvine_id": i["comicvine_id"],
-                        "issue_number": i["issue_number"],
-                        "calculated_issue_number": i["calculated_issue_number"],
-                        "title": i["title"],
-                        "date": i["date"],
-                        "description": i["description"],
-                        "monitored": True
-                    }
-                    for i in vd["issues"] or []
-                )
-            )
+            for issue in vd['issues'] or ():
+                upsert_issue_metadata(volume_id, issue, True)
+            if comicvine_id is None:
+                cursor.execute("""
+                    INSERT INTO metadata_reconciliation(
+                        volume_id, checked_at, status, message
+                    ) VALUES (?, 0, 'pending', 'Publisher-backed series');
+                """, (volume_id,))
 
             volume = Volume(volume_id)
 
             if special_version is None:
-                special_version = determine_special_version(volume.id)
+                special_version = (
+                    determine_special_version(volume.id)
+                    if comicvine_id is not None else SpecialVersion.NORMAL
+                )
             volume.update({'special_version': special_version})
 
             folder = generate_volume_folder_path(
@@ -1915,7 +1947,12 @@ class Library:
                     'monitored': monitored,
                     'monitor_new_issues': monitor_new_issues,
                     'root_folder': root_folder.folder,
-                    'auto_search': auto_search
+                    'auto_search': auto_search,
+                    'metadata_origin': 'publisher' if comicvine_id is None else 'comicvine',
+                    'source_ids': [
+                        identity for issue in vd['issues'] or ()
+                        for identity in issue.get('source_ids', ())
+                    ]
                 },
                 cursor=cursor
             )
@@ -1928,9 +1965,7 @@ class Library:
             task = AutoSearchVolume(volume_id)
             TaskHandler().add(task)
 
-        LOGGER.info(
-            f'Added volume with CV ID {comicvine_id} and ID {volume_id}'
-        )
+        LOGGER.info('Added library volume %s (ComicVine ID: %s)', volume_id, comicvine_id)
         return volume_id
 
 
@@ -2090,6 +2125,34 @@ def refresh_and_scan(
     if should_stop():
         return
 
+    if volume_ids is not None and not volume_ids and not volume_id:
+        return
+    source_cursor = get_db()
+    source_clause = 'comicvine_id IS NULL'
+    source_params: List[int] = []
+    if volume_id:
+        source_clause += ' AND id = ?'
+        source_params = [volume_id]
+    elif volume_ids is not None:
+        source_clause += f' AND id IN ({",".join("?" for _ in volume_ids)})'
+        source_params = volume_ids
+    publisher_ids = [
+        row[0] for row in source_cursor.execute(
+            f'SELECT id FROM volumes WHERE {source_clause};', source_params
+        )
+    ]
+    if publisher_ids:
+        from backend.implementations.metadata_ids import refresh_publisher_volumes
+        from backend.implementations.release_discovery import (
+            get_discovery_range, get_release_discovery,
+        )
+        run(get_release_discovery(*get_discovery_range()))
+        refresh_publisher_volumes(publisher_ids, force=not allow_skipping)
+        for publisher_id in publisher_ids:
+            if should_stop():
+                return
+            scan_files(publisher_id, update_websocket=update_websocket)
+
     current_time = datetime.now()
     skip_threshold = current_time - timedelta(
         hours=Settings().sv.refresh_skip_window
@@ -2101,7 +2164,7 @@ def refresh_and_scan(
         cursor.execute("""
             SELECT comicvine_id, id, last_cv_fetch
             FROM volumes
-            WHERE id = ?
+            WHERE id = ? AND comicvine_id IS NOT NULL
             LIMIT 1;
             """,
             (volume_id,)
@@ -2115,7 +2178,7 @@ def refresh_and_scan(
             f"""
             SELECT comicvine_id, id, last_cv_fetch
             FROM volumes
-            WHERE id IN ({placeholders})
+            WHERE id IN ({placeholders}) AND comicvine_id IS NOT NULL
                 AND last_cv_fetch <= ?
             ORDER BY last_cv_fetch ASC;
             """,
@@ -2131,7 +2194,7 @@ def refresh_and_scan(
         cursor.execute("""
             SELECT comicvine_id, id, last_cv_fetch
             FROM volumes
-            WHERE last_cv_fetch <= ?
+            WHERE last_cv_fetch <= ? AND comicvine_id IS NOT NULL
             ORDER BY last_cv_fetch ASC;
             """,
             (
@@ -2164,7 +2227,7 @@ def refresh_and_scan(
 
     if not volume_id and allow_skipping:
         cv_id_to_issue_count: Dict[int, int] = dict(cursor.execute("""
-            SELECT v.comicvine_id, COUNT(i.id)
+            SELECT v.comicvine_id, COUNT(i.comicvine_id)
             FROM volumes v
             LEFT JOIN issues i
             ON v.id = i.volume_id
@@ -2182,12 +2245,25 @@ def refresh_and_scan(
             or cv_to_id_fetch[v["comicvine_id"]][1] <= thirty_days_ago.timestamp()
         ]
 
+    from backend.implementations.metadata_ids import (
+        bind_source_id, comicvine_identity, upsert_issue_metadata,
+    )
+    for metadata in volume_datas:
+        bind_source_id(
+            'volume', cv_to_id_fetch[metadata['comicvine_id']][0],
+            comicvine_identity(metadata['comicvine_id'])
+        )
     cursor.executemany(
         """
         UPDATE volumes
         SET
             title = :title,
-            alt_title = :alt_title,
+            alt_title = CASE
+                WHEN EXISTS (
+                    SELECT 1 FROM metadata_reconciliation
+                    WHERE volume_id = volumes.id
+                ) THEN COALESCE(alt_title, :alt_title)
+                ELSE :alt_title END,
             year = :year,
             publisher = :publisher,
             volume_number = :volume_number,
@@ -2210,7 +2286,6 @@ def refresh_and_scan(
         }
             for vd in volume_datas
         ))
-
     cursor.executemany(
         """
         UPDATE volumes_covers
@@ -2255,45 +2330,11 @@ def refresh_and_scan(
     monitor_issues_volume_ids: Set[int] = set(first_of_subarrays(cursor.execute(
         "SELECT id FROM volumes WHERE monitor_new_issues = 1;"
     )))
-    cursor.executemany(
-        """
-        INSERT INTO issues(
-            volume_id,
-            comicvine_id,
-            issue_number,
-            calculated_issue_number,
-            title,
-            date,
-            store_date,
-            description,
-            monitored
-        ) VALUES (
-            :volume_id, :comicvine_id, :issue_number, :calculated_issue_number,
-            :title, :date, :store_date, :description, :monitored
+    for metadata in issue_datas:
+        local_id = cv_to_id_fetch[metadata['volume_id']][0]
+        upsert_issue_metadata(
+            local_id, metadata, local_id in monitor_issues_volume_ids
         )
-        ON CONFLICT(comicvine_id) DO
-        UPDATE
-        SET
-            issue_number = :issue_number,
-            calculated_issue_number = :calculated_issue_number,
-            title = :title,
-            date = :date,
-            store_date = :store_date,
-            description = :description;
-        """,
-        ({
-            "volume_id": cv_to_id_fetch[isd["volume_id"]][0],
-            "comicvine_id": isd["comicvine_id"],
-            "issue_number": isd["issue_number"],
-            "calculated_issue_number": isd["calculated_issue_number"] or 0.0,
-            "title": isd["title"],
-            "date": isd["date"],
-            "store_date": isd.get("store_date"),
-            "description": isd["description"],
-            "monitored": cv_to_id_fetch[isd["volume_id"]][0] in monitor_issues_volume_ids
-        }
-            for isd in issue_datas
-        ))
 
     commit()
     if should_stop():
@@ -2307,9 +2348,8 @@ def refresh_and_scan(
             .add(isd["comicvine_id"]))
 
     for vd in filtered_volume_datas:
-        if len(volume_issues_fetched.get(
-            vd["comicvine_id"]
-        ) or tuple()) != vd["issue_count"]:
+        fetched_ids = volume_issues_fetched.get(vd['comicvine_id'], set())
+        if len(fetched_ids) != vd["issue_count"]:
             continue
 
         # All issues of the volume have been fetched, which is not guaranteed
@@ -2324,7 +2364,23 @@ def refresh_and_scan(
             (vd["comicvine_id"],)
         ).fetchall())
         for issue_cv, issue_id in issue_cv_to_id.items():
-            if issue_cv not in volume_issues_fetched[vd["comicvine_id"]]:
+            if issue_cv is not None and issue_cv not in fetched_ids:
+                publisher_identity = cursor.execute("""
+                    SELECT 1 FROM issue_source_ids
+                    WHERE issue_id = ? AND source != 'comicvine' LIMIT 1;
+                """, (issue_id,)).fetchone()
+                if publisher_identity is not None:
+                    from backend.implementations.metadata_ids import _record_reconciliation
+                    _record_reconciliation(
+                        cv_to_id_fetch[vd['comicvine_id']][0], 'conflict',
+                        [vd['comicvine_id']],
+                        'ComicVine omitted a publisher-linked issue; retained for review'
+                    )
+                    LOGGER.warning(
+                        'Retaining publisher-linked issue %s omitted by ComicVine',
+                        issue_id
+                    )
+                    continue
                 # Issue is in database but not in response, so remove
                 Issue(issue_id).delete()
                 commit()

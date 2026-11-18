@@ -147,7 +147,8 @@ def _volumes_with_pending_releases(now: float) -> Set[int]:
                 w.first_seen, w.release_date
             FROM pending_release_watches w
             INNER JOIN volumes v
-                ON v.id = w.volume_id;
+                ON v.id = w.volume_id
+            WHERE v.comicvine_id IS NOT NULL;
         """)
         if _due_for_pending_release(
             last_fetch,

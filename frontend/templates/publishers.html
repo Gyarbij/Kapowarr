@@ -13,6 +13,7 @@
 {% endblock %}
 
 {% block windows %}
+	{% include "source_add_window.html" %}
 	{{ loading_window("add-loading-window", "Adding volume...") }}
 
 	{% set add_content %}

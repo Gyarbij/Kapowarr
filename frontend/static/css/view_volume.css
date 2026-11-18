@@ -488,3 +488,27 @@ tbody .issue-title:hover {
 		display: none;
 	}
 }
+#metadata-identities {
+	margin-block: 1rem;
+	padding: .75rem;
+	border: 1px solid var(--border-color);
+	border-radius: var(--border-radius);
+	color: var(--text-color);
+}
+
+#metadata-identity-list {
+	max-height: 12rem;
+	overflow-y: auto;
+	margin: .75rem 1.5rem;
+	font-size: .85rem;
+	overflow-wrap: anywhere;
+}
+
+#metadata-identities input,
+#metadata-identities button {
+	padding: .5rem;
+	margin-top: .5rem;
+	border: 1px solid var(--border-color);
+	color: var(--text-color);
+	background: var(--foreground-color);
+}

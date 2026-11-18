@@ -732,19 +732,26 @@ class SearchOutcomeData(TypedDict):
     enqueue_failures: Dict[str, int]
 
 
+class MetadataSourceID(TypedDict):
+    source: str
+    source_id: str
+    source_url: Union[str, None]
+
+
 class IssueMetadata(TypedDict):
-    comicvine_id: int
-    volume_id: int
+    comicvine_id: Union[int, None]
+    volume_id: Union[int, None]
     issue_number: str
     calculated_issue_number: float
     title: Union[str, None]
     date: Union[str, None]
     store_date: Union[str, None]
     description: str
+    source_ids: NotRequired[List[MetadataSourceID]]
 
 
 class VolumeMetadata(TypedDict):
-    comicvine_id: int
+    comicvine_id: Union[int, None]
     title: str
     year: Union[int, None]
     volume_number: int
@@ -758,6 +765,7 @@ class VolumeMetadata(TypedDict):
     translated: bool
     already_added: Union[int, None]
     issues: Union[List[IssueMetadata], None]
+    source_ids: NotRequired[List[MetadataSourceID]]
 
 
 class VolumeSearchMatch(TypedDict):
@@ -886,7 +894,7 @@ class BaseNamingKeys:
     series_name: str
     clean_series_name: str
     volume_number: str
-    comicvine_id: int
+    comicvine_id: Union[int, None]
     year: Union[int, None]
     publisher: Union[str, None]
 
@@ -901,7 +909,7 @@ class VolumeNamingKeys(BaseNamingKeys):
 
 @dataclass
 class TitlelessIssueNamingKeys(BaseNamingKeys):
-    issue_comicvine_id: int
+    issue_comicvine_id: Union[int, None]
     issue_number: str
     issue_release_date: Union[str, None]
     issue_release_year: Union[int, None]
@@ -916,7 +924,7 @@ class IssueNamingKeys(TitlelessIssueNamingKeys):
 class IssueData:
     id: int
     volume_id: int
-    comicvine_id: int
+    comicvine_id: Union[int, None]
     issue_number: str
     calculated_issue_number: float
     title: Union[str, None]
@@ -932,7 +940,7 @@ class IssueData:
 @dataclass
 class VolumeData:
     id: int
-    comicvine_id: int
+    comicvine_id: Union[int, None]
     title: str
     alt_title: Union[str, None]
     year: Union[int, None]

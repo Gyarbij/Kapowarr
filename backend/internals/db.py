@@ -377,6 +377,38 @@ def setup_db() -> None:
     return
 
 
+SOURCE_ID_SCHEMA = """
+CREATE TABLE IF NOT EXISTS volume_source_ids(
+    volume_id INTEGER NOT NULL REFERENCES volumes(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_url TEXT,
+    matched_at INTEGER NOT NULL,
+    PRIMARY KEY(source, source_id)
+);
+CREATE INDEX IF NOT EXISTS volume_source_ids_volume_index
+    ON volume_source_ids(volume_id);
+CREATE TABLE IF NOT EXISTS issue_source_ids(
+    issue_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_url TEXT,
+    matched_at INTEGER NOT NULL,
+    PRIMARY KEY(source, source_id)
+);
+CREATE INDEX IF NOT EXISTS issue_source_ids_issue_index
+    ON issue_source_ids(issue_id);
+CREATE TABLE IF NOT EXISTS metadata_reconciliation(
+    volume_id INTEGER PRIMARY KEY REFERENCES volumes(id) ON DELETE CASCADE,
+    checked_at INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(
+        status IN ('pending', 'linked', 'ambiguous', 'conflict', 'error')
+    ),
+    candidate_ids TEXT NOT NULL DEFAULT '[]',
+    message TEXT NOT NULL DEFAULT ''
+);
+"""
+
 DB_SCHEMA = """
 CREATE TABLE IF NOT EXISTS config(
     key VARCHAR(100) PRIMARY KEY,
@@ -388,7 +420,7 @@ CREATE TABLE IF NOT EXISTS root_folders(
 );
 CREATE TABLE IF NOT EXISTS volumes(
     id INTEGER PRIMARY KEY,
-    comicvine_id INTEGER NOT NULL,
+    comicvine_id INTEGER,
     title VARCHAR(255) NOT NULL,
     alt_title VARCHAR(255),
     year INTEGER(5),
@@ -443,7 +475,7 @@ CREATE INDEX IF NOT EXISTS volumes_monitored_index
 CREATE TABLE IF NOT EXISTS issues(
     id INTEGER PRIMARY KEY,
     volume_id INTEGER NOT NULL,
-    comicvine_id INTEGER NOT NULL UNIQUE,
+    comicvine_id INTEGER UNIQUE,
     issue_number VARCHAR(20) NOT NULL,
     calculated_issue_number FLOAT(20) NOT NULL,
     title VARCHAR(255),
@@ -670,7 +702,7 @@ CREATE TABLE IF NOT EXISTS pending_release_watches(
     FOREIGN KEY (volume_id) REFERENCES volumes(id)
         ON DELETE CASCADE
 );
-"""
+""" + SOURCE_ID_SCHEMA
 
 DB_SCHEMA_INDEXES = """
 CREATE INDEX IF NOT EXISTS volumes_created_at_index
@@ -689,6 +721,8 @@ CREATE INDEX IF NOT EXISTS release_discovery_date_index
     ON release_discovery(release_date, provider);
 CREATE INDEX IF NOT EXISTS release_discovery_title_index
     ON release_discovery(series_title, issue_number);
+CREATE INDEX IF NOT EXISTS release_discovery_external_id_index
+    ON release_discovery(provider, external_id);
 CREATE INDEX IF NOT EXISTS pending_release_watches_volume_index
     ON pending_release_watches(volume_id);
 """

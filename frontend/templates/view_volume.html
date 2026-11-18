@@ -494,6 +494,14 @@
 				</div>
 				<section id="volume-description-mobile" class="description" aria-label="Description"></section>
 			</div>
+			<details id="metadata-identities">
+				<summary>Metadata IDs and reconciliation</summary>
+				<p id="metadata-identity-status" role="status"></p>
+				<ul id="metadata-identity-list"></ul>
+				<label for="metadata-comicvine-id">ComicVine volume ID (optional)</label>
+				<input id="metadata-comicvine-id" type="number" min="1" placeholder="Auto-match">
+				<button type="button" id="reconcile-metadata">Reconcile ComicVine</button>
+			</details>
 			<div class="issues-table-container icon-text-color">
 				<table class="issues-table" aria-label="Issue list">
 					<thead>

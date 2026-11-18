@@ -61,6 +61,9 @@ from backend.implementations.external_clients import ExternalClients
 from backend.implementations.file_matching import get_file_matching, set_file_matching
 from backend.implementations.metadata_cache import MetadataCache
 from backend.implementations.metadata_sources.base import MetadataSourceType
+from backend.implementations.metadata_ids import (
+    add_publisher_issue, get_metadata_identity_data, reconcile_comicvine,
+)
 from backend.implementations.naming import (
     generate_volume_folder_name,
     preview_mass_rename,
@@ -1044,6 +1047,52 @@ def api_volumes():
 def api_volumes_stats():
     result = Library.get_stats()
     return return_api(result)
+
+
+@api.route('/volumes/from-source', methods=['POST'])
+@error_handler
+@auth
+def api_volume_from_source():
+    data = request.get_json()
+    if not isinstance(data, dict):
+        raise InvalidKeyValue('body', data)
+    source = data.get('source')
+    source_id = data.get('source_id')
+    root_folder_id = data.get('root_folder_id')
+    if not isinstance(source, str):
+        raise InvalidKeyValue('source', source)
+    if not isinstance(source_id, str) or not source_id or len(source_id) > 1024:
+        raise InvalidKeyValue('source_id', source_id)
+    if type(root_folder_id) is not int or root_folder_id < 1:
+        raise InvalidKeyValue('root_folder_id', root_folder_id)
+    options = {
+        'monitored': data.get('monitor', True),
+        'monitor_new_issues': data.get('monitor_new_issues', True),
+        'auto_search': data.get('auto_search', False)
+    }
+    for key, value in options.items():
+        if not isinstance(value, bool):
+            raise InvalidKeyValue(key, value)
+    volume_id = add_publisher_issue(source, source_id, root_folder_id, **options)
+    return return_api(Library.get_volume(volume_id).get_public_data(), code=201)
+
+
+@api.route('/volumes/<int:id>/metadata-ids', methods=['GET', 'POST'])
+@error_handler
+@auth
+def api_volume_metadata_ids(id: int):
+    Library.get_volume(id)
+    if request.method == 'POST':
+        data = request.get_json()
+        if not isinstance(data, dict):
+            raise InvalidKeyValue('body', data)
+        candidate = data.get('comicvine_id')
+        if candidate is not None and (type(candidate) is not int or candidate < 1):
+            raise InvalidKeyValue('comicvine_id', candidate)
+        result = reconcile_comicvine(id, candidate_id=candidate)
+        get_db().connection.commit()
+        return return_api(result)
+    return return_api(get_metadata_identity_data(id))
 
 
 @api.route('/volumes/publishers', methods=['GET'])

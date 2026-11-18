@@ -3,7 +3,7 @@ import sqlite3
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from backend.implementations import release_catalog, release_discovery
+from backend.implementations import metadata_ids, release_catalog, release_discovery
 from backend.internals.db import DB_SCHEMA, KapowarrCursor
 
 MARVEL_URL = (
@@ -60,6 +60,9 @@ class ReleaseCatalogQueryTest(unittest.TestCase):
         self.assertFalse(release_catalog.matches_release_query(
             announced_issue(), MARVEL_URL.replace('132266', '132267')
         ))
+        self.assertTrue(release_catalog.matches_release_query(
+            announced_issue(), 'marvel:132266'
+        ))
 
     def test_publisher_alias_and_pagination_preserve_the_search_scope(self):
         records = [
@@ -104,6 +107,11 @@ class ReleaseCatalogDatabaseTest(unittest.TestCase):
         )
         db_patch.start()
         self.addCleanup(db_patch.stop)
+        identity_db_patch = patch.object(
+            metadata_ids, 'get_db', return_value=self.cursor
+        )
+        identity_db_patch.start()
+        self.addCleanup(identity_db_patch.stop)
 
     def _load(self, discovered):
         with patch.object(
@@ -169,6 +177,9 @@ class ReleaseCatalogDatabaseTest(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]['issue_title'], 'Demons beware')
         self.assertEqual(records[0]['providers'], ['marvel', 'library'])
+        self.assertTrue(
+            release_catalog.matches_release_query(records[0], 'comicvine:901')
+        )
 
     def test_publisher_metadata_persists_without_creating_a_fake_library_entry(
         self):

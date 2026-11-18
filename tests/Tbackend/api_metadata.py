@@ -247,6 +247,47 @@ class MetadataApiTest(unittest.TestCase):
         self.assertEqual(status, 401)
         loader.assert_not_awaited()
 
+    def test_publisher_addition_passes_namespaced_ids_not_comicvine_ids(self):
+        self.app.register_blueprint(api.api, url_prefix='/api')
+        with patch.object(
+            api, 'Settings', return_value=self.settings
+        ), patch.object(
+            api.StartTypeHandlers, 'diffuse_timer'
+        ), patch.object(
+            api, 'add_publisher_issue', return_value=8
+        ) as add, patch.object(api.Library, 'get_volume') as get_volume:
+            get_volume.return_value.get_public_data.return_value = {
+                'id': 8, 'comicvine_id': None
+            }
+            response = self.app.test_client().post(
+                '/api/volumes/from-source?api_key=test-key',
+                json={
+                    'source': 'marvel', 'source_id': '132266',
+                    'root_folder_id': 1, 'auto_search': True
+                }
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.json['result']['comicvine_id'])
+        add.assert_called_once_with(
+            'marvel', '132266', 1, monitored=True,
+            monitor_new_issues=True, auto_search=True
+        )
+
+    def test_reconciliation_api_does_not_accept_an_invalid_candidate(self):
+        with self.app.test_request_context(
+            '/api/volumes/8/metadata-ids?api_key=test-key',
+            method='POST', json={'comicvine_id': True}
+        ), patch.object(
+            api, 'Settings', return_value=self.settings
+        ), patch.object(
+            api.StartTypeHandlers, 'diffuse_timer'
+        ), patch.object(api.Library, 'get_volume'), patch.object(
+            api, 'reconcile_comicvine'
+        ) as reconcile:
+            _response, status = api.api_volume_metadata_ids(8)
+        self.assertEqual(status, 400)
+        reconcile.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
