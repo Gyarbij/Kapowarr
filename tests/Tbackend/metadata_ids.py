@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 from backend.base.custom_exceptions import (InvalidComicVineApiKey,
                                             InvalidKeyValue, VolumeNotMatched)
+from backend.base.definitions import MonitorScheme, SpecialVersion
 from backend.implementations import metadata_ids, release_refresh, volumes
 from backend.implementations.release_discovery import enrich_discovery_records
 from backend.internals.db import DB_SCHEMA, KapowarrCursor
@@ -265,6 +266,42 @@ class MetadataIdentityTest(unittest.TestCase):
             SELECT COUNT(*) FROM issue_source_ids
             WHERE source='marvel' AND source_id='132267';
         """).fetchone()[0], 1)
+
+    def test_new_series_defaults_to_first_issue_year_and_honors_add_options(
+        self):
+        self.cursor.execute("""
+            INSERT INTO release_discovery(
+                provider, record_key, external_id, publisher, series_title,
+                issue_number, release_date, fetched_at
+            ) VALUES ('marvel', 'marvel:new', 'new', 'Marvel', 'New Run',
+                1.0, '2026-11-18', 1000);
+        """)
+        with patch.object(volumes.Library, 'add_metadata', return_value=2) as add:
+            result = metadata_ids.add_publisher_issue(
+                'marvel',
+                'new',
+                1,
+                monitor_scheme=MonitorScheme.NONE,
+                volume_folder='Custom Run',
+                special_version=SpecialVersion.ONE_SHOT)
+        self.assertEqual(result, 2)
+        metadata, *options = add.call_args.args
+        self.assertEqual(metadata['year'], 2026)
+        self.assertEqual(
+            options, [
+                1, True, MonitorScheme.NONE, True, 'Custom Run', SpecialVersion.ONE_SHOT])
+
+        self.cursor.execute('UPDATE release_discovery SET issue_number = 9;')
+        self.assertIsNone(
+            metadata_ids.get_publisher_add_record(
+                'marvel', 'new')['suggested_year'])
+        self.cursor.execute('UPDATE release_discovery SET series_year = 2020;')
+        self.assertEqual(
+            metadata_ids.get_publisher_add_record(
+                'marvel', 'new')['suggested_year'], 2020)
+        with patch.object(volumes.Library, 'add_metadata', return_value=2) as add:
+            metadata_ids.add_publisher_issue('marvel', 'new', 1, year=2021)
+        self.assertEqual(add.call_args.args[0]['year'], 2021)
 
     def test_adding_comicvine_metadata_reuses_a_publisher_volume(self):
         issue_id = self._publisher_issue()

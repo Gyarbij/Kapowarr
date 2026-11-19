@@ -178,9 +178,103 @@ function createQueueAction(item, action, label) {
 
 function addVolumeSearchURL(item) {
 	const params = new URLSearchParams({q: item.series_title || item.display_title});
-	if (item.issue_year)
-		params.set('y', item.issue_year);
 	return `${url_base}/add?${params.toString()}`;
+}
+
+function showWeeklyMatch(item) {
+	const form = document.getElementById('weekly-match-search');
+	const query = document.getElementById('weekly-match-query');
+	const results = document.getElementById('weekly-match-results');
+	const message = document.getElementById('weekly-match-message');
+	const save = document.getElementById('weekly-match-save');
+	const reset = document.getElementById('weekly-match-reset');
+	const weeks = Number(WeeklyEls.range.value);
+	const key = item.record_key;
+	const request = Symbol();
+	WeeklyState.match = request;
+	let searchId = 0;
+	let selected = null;
+	let saving = false;
+	document.getElementById('weekly-match-title').textContent = item.display_title;
+	document.getElementById('weekly-match-current').textContent = item.match_reason;
+	query.value = item.series_title;
+	reset.classList.toggle('hidden', !item.manual_match);
+	reset.disabled = false;
+	showWindow('weekly-match-window');
+
+	async function search() {
+		const id = ++searchId;
+		selected = null;
+		save.disabled = true;
+		results.replaceChildren();
+		message.textContent = 'Searching your library...';
+		try {
+			const json = await fetchAPI('/weekly-packs/match', WeeklyState.apiKey, {
+				record_key: encodeURIComponent(key), weeks,
+				query: encodeURIComponent(query.value.trim())
+			});
+			if (WeeklyState.match !== request || id !== searchId) return;
+			for (const match of json.result) {
+				const radio = document.createElement('input');
+				radio.type = 'radio';
+				radio.name = 'weekly-match-issue';
+				radio.onchange = () => {
+					selected = match.issue_id;
+					save.disabled = false;
+				};
+				const label = weeklyElement('label', 'weekly-match-option');
+				const details = `#${match.issue_number} · ${match.release_date || 'Unknown date'}${match.downloaded ? ' · Downloaded' : ''}${match.manual_match ? ' · Current match' : ''}`;
+				const description = weeklyElement('span');
+				description.append(
+					weeklyElement('strong', '', `${match.title}${match.year ? ` (${match.year})` : ''}`),
+					weeklyElement('span', '', [match.publisher, `Vol. ${match.volume_number}`, details].filter(Boolean).join(' · '))
+				);
+				label.append(radio, description);
+				results.appendChild(label);
+			}
+			message.textContent = json.result.length
+				? 'Select the correct series and issue.'
+				: 'No local issues found. Try a different series title or clear the search to see issues with the same number.';
+		} catch (error) {
+			if (WeeklyState.match !== request || id !== searchId) return;
+			console.error('Weekly match search failed:', error);
+			message.textContent = 'Could not load matching library issues. Try searching again.';
+		}
+	}
+
+	async function update(issueId) {
+		if (saving) return;
+		saving = true;
+		++searchId;
+		save.disabled = reset.disabled = true;
+		message.textContent = 'Saving release match...';
+		try {
+			await sendAPI('POST', '/weekly-packs/match', WeeklyState.apiKey, {}, {
+				record_key: key, weeks, issue_id: issueId
+			});
+		} catch (error) {
+			if (WeeklyState.match !== request) return;
+			console.error('Weekly match update failed:', error);
+			message.textContent = 'Could not save this match. Check that the issue is still in your library and try again.';
+			saving = false;
+			save.disabled = selected === null;
+			reset.disabled = false;
+			return;
+		}
+		if (WeeklyState.match !== request) return;
+		WeeklyState.selected.delete(key);
+		closeWindow();
+		await fetchWeeklyPacks(WeeklyState.apiKey, false, true);
+		WeeklyEls.message.textContent = issueId === null ? 'Automatic matching restored.' : 'Release match saved.';
+	}
+	form.onsubmit = event => {
+		event.preventDefault();
+		if (!saving) search();
+	};
+	save.onclick = () => { if (selected !== null) update(selected); };
+	reset.onclick = () => update(null);
+	query.focus();
+	search();
 }
 
 function createItemActions(item) {
@@ -211,9 +305,18 @@ function createItemActions(item) {
 	) {
 		actions.appendChild(createActionLink(
 			addVolumeSearchURL(item),
-			`Find ${item.series_title} in canonical metadata`,
+			`Find ${item.series_title} in Add Volume`,
 			'search.svg'
 		));
+	}
+	if (item.calculated_issue_number != null) {
+		const match = weeklyElement(
+			'button', 'weekly-action weekly-match-action',
+			item.manual_match ? 'Edit match' : item.local_issue_id ? 'Fix match' : 'Match issue'
+		);
+		match.type = 'button';
+		match.onclick = () => showWeeklyMatch(item);
+		actions.appendChild(match);
 	}
 	return actions;
 }

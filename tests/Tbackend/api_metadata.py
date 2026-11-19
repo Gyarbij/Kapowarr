@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from flask import Flask
 
+from backend.base.definitions import MonitorScheme, SpecialVersion
 from backend.implementations.metadata_sources.base import MetadataSourceType
 from frontend import api
 from tests.Tbackend.release_catalog import MARVEL_URL, announced_issue
@@ -262,16 +263,40 @@ class MetadataApiTest(unittest.TestCase):
             response = self.app.test_client().post(
                 '/api/volumes/from-source?api_key=test-key',
                 json={
-                    'source': 'marvel', 'source_id': '132266',
-                    'root_folder_id': 1, 'auto_search': True
-                }
-            )
+                    'source': 'marvel',
+                    'source_id': '132266',
+                    'root_folder_id': 1,
+                    'auto_search': True,
+                    'monitoring_scheme': 'none',
+                    'volume_folder': 'Custom/Series',
+                    'special_version': 'one-shot',
+                    'year': 2026})
         self.assertEqual(response.status_code, 201)
         self.assertIsNone(response.json['result']['comicvine_id'])
         add.assert_called_once_with(
             'marvel', '132266', 1, monitored=True,
-            monitor_new_issues=True, auto_search=True
+            monitor_new_issues=True, auto_search=True,
+            monitor_scheme=MonitorScheme.NONE, volume_folder='Custom/Series',
+            special_version=SpecialVersion.ONE_SHOT, year=2026
         )
+
+    def test_weekly_match_requires_auth_and_rejects_invalid_issue_id(self):
+        self.app.register_blueprint(api.api, url_prefix='/api')
+        client = self.app.test_client()
+        with patch.object(api, 'Settings', return_value=self.settings), \
+                patch.object(api.StartTypeHandlers, 'diffuse_timer'), \
+                patch.object(api, 'get_weekly_match_item') as loader:
+            data = {
+                'record_key': 'https://getcomics.org/dc/example/',
+                'issue_id': 4}
+            response = client.post('/api/weekly-packs/match', json=data)
+            self.assertEqual(response.status_code, 401)
+            response = client.post(
+                '/api/weekly-packs/match?api_key=test-key',
+                json={**data, 'issue_id': True}
+            )
+            self.assertEqual(response.status_code, 400)
+            loader.assert_not_called()
 
     def test_reconciliation_api_does_not_accept_an_invalid_candidate(self):
         with self.app.test_request_context(

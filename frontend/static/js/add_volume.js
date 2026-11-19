@@ -21,20 +21,6 @@ const SearchEls = {
 		volume_number: document.querySelector('#filter-volume-number'),
 		year: document.querySelector('#filter-year'),
 		issue_count: document.querySelector('#filter-issue-count')
-	},
-	window: {
-		form: document.querySelector('#add-form'),
-		title: document.querySelector('#add-window h2'),
-		cover: document.querySelector('#add-cover'),
-		cv_input: document.querySelector('#comicvine-input'),
-		monitor_volume_input: document.querySelector('#monitor-volume-input'),
-		monitor_issues_input: document.querySelector('#monitor-issues-input'),
-		monitoring_scheme: document.querySelector('#monitoring-scheme-input'),
-		root_folder_input: document.querySelector('#rootfolder-input'),
-		volume_folder_input: document.querySelector('#volumefolder-input'),
-        special_state_input: document.querySelector('#specialoverride-input'),
-		auto_search_input: document.querySelector('#auto-search-input'),
-		submit: document.querySelector('#add-volume')
 	}
 };
 
@@ -84,7 +70,7 @@ function addAlreadyAdded(entry, id) {
 	title.appendChild(aa_icon);
 };
 
-function buildResults(results, api_key) {
+function buildResults(results) {
 	SearchEls.search_results
         .querySelectorAll('button:not(.filter-bar)')
         .forEach(e => e.remove());
@@ -106,7 +92,10 @@ function buildResults(results, api_key) {
 
 		// Only allow adding volume if it isn't already added
 		if (result.already_added === null)
-			entry.onclick = e => showAddWindow(result.comicvine_id, api_key);
+			entry.onclick = () => AddVolumeWindow.open({
+				volume: result,
+				onAdded: id => addAlreadyAdded(entry, id)
+			});
 
 		entry.querySelector('img').src = result.cover_link;
 
@@ -267,7 +256,7 @@ function search(reset_url_params=true) {
 		fetchAPI('/volumes/search', api_key, {query: encodeURIComponent(query)})
 		.then(json => {
 			if (requestId !== searchRequestId) return;
-			buildResults(json.result, api_key);
+			buildResults(json.result);
 
 			if (!SearchEls.search_results.querySelector('button:not(.filter-bar)'))
 				hide([SearchEls.msgs.loading], [SearchEls.msgs.empty]);
@@ -404,117 +393,14 @@ function processURLFilters() {
         SearchEls.filters.publisher.value = params.get('p');
 };
 
-//
-// Adding
-//
-function fillRootFolderInput(api_key) {
-	fetchAPI('/rootfolder', api_key)
-	.then(json => {
-		if (json.result.length)
-			json.result.forEach(folder => {
-				const option = document.createElement('option');
-				option.value = folder.id;
-				option.innerText = folder.folder;
-				SearchEls.window.root_folder_input.appendChild(option);
-			});
-		else
-			hide([], [SearchEls.msgs.blocked]);
-	});
-};
-
-function showAddWindow(comicvine_id, api_key) {
-	const volume_data = document.querySelector(
-		`button[data-comicvine_id="${comicvine_id}"]`
-	).dataset;
-	const body = {
-		'comicvine_id': volume_data.comicvine_id,
-		'title': volume_data._title,
-		'year': volume_data._year || null,
-		'volume_number': volume_data._volume_number,
-		'publisher': volume_data._publisher || null
-	};
-
-	sendAPI('POST', '/volumes/search', api_key, {}, body)
-	.then(response => response.json())
-	.then(json => {
-		volume_data._volume_folder = json.result.folder;
-		SearchEls.window.volume_folder_input.value = json.result.folder;
-		showWindow("add-window");
-	});
-
-	SearchEls.window.title.innerText = volume_data.title;
-	SearchEls.window.cover.src = volume_data.cover;
-	SearchEls.window.cv_input.value = comicvine_id;
-    SearchEls.window.special_state_input.value = "auto";
-	
-	const monitoring_pref = getLocalStorage(
-		'monitor_new_volume', 'monitor_new_issues', 'monitoring_scheme'
-	);
-	SearchEls.window.monitor_volume_input.value = monitoring_pref.monitor_new_volume;
-	SearchEls.window.monitor_issues_input.value = monitoring_pref.monitor_new_issues;
-	SearchEls.window.monitoring_scheme.value = monitoring_pref.monitoring_scheme;
-};
-
-function addVolume() {
-	showLoadWindow("add-window");
-	const volume_folder = SearchEls.window.volume_folder_input.value;
-
-	const data = {
-		'comicvine_id': parseInt(SearchEls.window.cv_input.value),
-		'root_folder_id': parseInt(SearchEls.window.root_folder_input.value),
-		'monitor': SearchEls.window.monitor_volume_input.value === "true",
-		'monitoring_scheme': SearchEls.window.monitoring_scheme.value,
-		'monitor_new_issues': SearchEls.window.monitor_issues_input.value === "true",
-		'volume_folder': '',
-        'special_version': SearchEls.window.special_state_input.value || null,
-		'auto_search': SearchEls.window.auto_search_input.checked
-	};
-	if (
-		volume_folder !== ''
-		&& volume_folder !== document.querySelector(
-			`button[data-comicvine_id="${data.comicvine_id}"]`
-		).dataset._volume_folder
-	) {
-		// Custom volume folder
-		data.volume_folder = volume_folder;
-	};
-	
-	setLocalStorage({
-		'monitor_new_volume': data.monitor,
-		'monitor_new_issues': data.monitor_new_issues,
-		'monitoring_scheme': data.monitoring_scheme
-	});
-
-	usingApiKey()
-	.then(api_key => {
-		sendAPI('POST', '/volumes', api_key, {}, data)
-		.then(response => response.json())
-		.then(json => {
-			const entry = document.querySelector(
-				`button[data-comicvine_id="${data.comicvine_id}"]`
-			);
-			addAlreadyAdded(entry, json.result.id);
-			closeWindow();
-		})
-		.catch(e => {
-			if (e.status === 509) {
-				SearchEls.window.submit.innerText = 'ComicVine API rate limit reached';
-				showWindow("add-window");
-			} else if (e.status === 400) {
-				SearchEls.window.submit.innerText = 'Volume folder is parent or child of other volume folder';
-				showWindow("add-window");
-			} else
-				console.log(e);
-		});
-	});
-};
-
 // code run on load
-usingApiKey()
-.then(api_key => fillRootFolderInput(api_key));
+usingApiKey().then(key => fetchAPI('/rootfolder', key))
+	.then(json => {
+		if (!json.result.length) hide([], [SearchEls.msgs.blocked]);
+	})
+	.catch(error => console.error('Could not check root folders:', error));
 
 SearchEls.search_bar.cancel.onclick = clearSearch;
-SearchEls.window.form.action = 'javascript:addVolume();';
 SearchEls.search_bar.bar.action = 'javascript:search();';
 
 SearchEls.filters.translations.onchange =

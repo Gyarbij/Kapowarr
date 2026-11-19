@@ -102,26 +102,3 @@
 	font-size: .9rem;
 	line-height: 1.5;
 }
-
-#source-add-form {
-	display: grid;
-	gap: .8rem;
-	max-width: 35rem;
-	color: var(--text-color);
-}
-
-#source-add-form select {
-	padding: .6rem;
-	color: var(--text-color);
-	background: var(--foreground-color);
-	border: 1px solid var(--border-color);
-}
-
-#source-add-form p {
-	overflow-wrap: anywhere;
-}
-
-#source-add-submit {
-	padding: .6rem 1rem;
-	background: var(--success-color);
-}

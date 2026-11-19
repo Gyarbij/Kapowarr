@@ -48,9 +48,12 @@ Add Volume also shows a separate **Publisher and library issues** result
 section. It supports the same issue references and URLs, even if the
 ComicVine search returns no series or reports an invalid API key.
 **Add from publisher** creates a managed volume and issue from a stored
-publisher/distributor record. Choose a root folder and monitoring settings,
-and optionally start the normal download search immediately. Finding a
-listing alone does not add or download anything.
+publisher/distributor record through the standard Add Volume dialog, including
+custom folders, monitoring schemes and special versions. The series start
+year is editable. It defaults to the publisher's series year, or to the
+release year of issue #1 when no series year was supplied. A later issue's
+release year is not used as the start year. Finding a listing alone does not
+add or download anything.
 
 ## Publisher And ComicVine Identities
 
@@ -147,10 +150,14 @@ item on the server before using the normal issue download path. An exact
 unmonitored issue offers Monitor and Download. Downloaded and metadata-pending
 matches link to the local volume for review.
 
-Items that are not in the library open Add Volume with their parsed title and
-year as search hints. You still choose a result from the configured canonical
-ComicVine or Metron source and confirm the normal root-folder and monitoring
-settings. Weekly Pack text never creates a volume or issue by itself.
+Use **Match issue** or **Fix match** on a release row to search your library
+and select the correct issue. The picker shows the series year, volume number,
+publisher, issue date and download status. The saved match applies to that
+release only; it doesn't alter your files or start a download. **Use automatic
+matching** removes the override.
+
+If the series isn't in your library, the Add Volume action searches by series
+title. Weekly Pack text never creates a volume or issue by itself.
 
 Publisher-wide JPG and WebP archives can be several gigabytes. They are shown
 separately as warning-labelled external links and are never queued or extracted

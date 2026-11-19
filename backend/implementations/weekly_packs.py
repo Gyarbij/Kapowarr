@@ -2,14 +2,17 @@
 
 import re
 from json import loads
+from time import time
 from typing import Any, Dict, Iterable, List, Union
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Tag
 
+from backend.base.custom_exceptions import InvalidKeyValue
 from backend.base.file_extraction import extract_filename_data
 from backend.base.helpers import AsyncSession
 from backend.implementations.response_cache import ResponseCache
+from backend.internals.db import get_db
 
 WEEK_DATE_REGEX = re.compile(
     r'(?P<year>\d{4})[.\-](?P<month>\d{2})[.\-](?P<day>\d{2})'
@@ -57,7 +60,10 @@ def _get_title_before_link(container: Tag, link: Tag) -> str:
 
 
 def _is_getcomics_url(url: str, article: bool = False) -> bool:
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
     if parsed.scheme not in ('http', 'https'):
         return False
     if (parsed.hostname or '').lower() not in (
@@ -310,8 +316,81 @@ async def get_enriched_weekly_packs(
             _discovery_item(item, pack['source_updated_at'])
             for item in pack['items']
         ]
-        pack['items'] = enrich_discovery_records(discovery_items, rows)
+        pack['items'] = enrich_discovery_records(
+            discovery_items, rows, use_weekly_overrides=True
+        )
     return packs
+
+
+async def get_weekly_match_item(record_key: str, weeks: int) -> dict:
+    if not _is_getcomics_url(record_key, article=True):
+        raise InvalidKeyValue('record_key', 'Expected a Weekly Packs issue')
+    for pack in await get_weekly_packs(weeks):
+        for item in pack['items']:
+            if item['record_key'] == record_key:
+                if not isinstance(
+                    item['calculated_issue_number'], (int, float)):
+                    raise InvalidKeyValue(
+                        'record_key', 'Expected a single numbered issue')
+                return item
+    raise InvalidKeyValue(
+        'record_key',
+        'Issue is no longer in these Weekly Packs')
+
+
+def weekly_match_candidates(item: dict, query: str) -> List[dict]:
+    from backend.implementations.release_discovery import _release_title_key
+
+    candidates = get_db().execute("""
+        SELECT v.id AS volume_id, v.title, v.alt_title, v.year, v.volume_number,
+            v.publisher, i.id AS issue_id, i.issue_number,
+            COALESCE(i.store_date, i.date) AS release_date,
+            EXISTS(SELECT 1 FROM issues_files WHERE issue_id = i.id) AS downloaded,
+            EXISTS(SELECT 1 FROM issue_source_ids
+                WHERE source = 'getcomics' AND source_id = :key
+                    AND issue_id = i.id) AS manual_match
+        FROM issues i JOIN volumes v ON v.id = i.volume_id
+        WHERE i.calculated_issue_number = :number
+        ORDER BY manual_match DESC,
+            COALESCE(ABS(julianday(COALESCE(i.store_date, i.date))
+                - julianday(:week)), 999999), v.title, v.year, i.id;
+    """, {
+        'key': item['record_key'], 'number': item.get('calculated_issue_number'),
+        'week': item['release_date']
+    }).fetchalldict()
+    key = _release_title_key(query)
+    text = query.casefold()
+    return [
+        row for row in candidates
+        if row['manual_match'] or not query or any(
+            (key and key in _release_title_key(title)) or text in title.casefold()
+            for title in (row['title'], row['alt_title']) if title
+        )
+    ][:30]
+
+
+def set_weekly_match(item: dict, issue_id: Union[int, None]) -> None:
+    cursor = get_db()
+    key = item['record_key']
+    with cursor:
+        if issue_id is None:
+            cursor.execute("""
+                DELETE FROM issue_source_ids
+                WHERE source = 'getcomics' AND source_id = ?;
+            """, (key,))
+            return
+        if cursor.execute("""
+            SELECT 1 FROM issues
+            WHERE id = ? AND calculated_issue_number = ?;
+        """, (issue_id, item.get('calculated_issue_number'))).fetchone() is None:
+            raise InvalidKeyValue('issue_id',
+     'Select a local issue with the same number')
+        cursor.execute("""
+            INSERT INTO issue_source_ids(issue_id, source, source_id, source_url, matched_at)
+            VALUES (?, 'getcomics', ?, ?, ?)
+            ON CONFLICT(source, source_id) DO UPDATE SET
+                issue_id = excluded.issue_id, matched_at = excluded.matched_at;
+        """, (issue_id, key, key, round(time())))
 
 
 def _monitor_weekly_item(volume_id: int, issue_id: int) -> None:

@@ -195,47 +195,9 @@ main > div {
 	display: none;
 }
 
-/*  */
-/* ADD VOLUME WINDOW */
-/*  */
-#add-window h2 {
-	font-weight: 400;
-	white-space: nowrap;
-	overflow-x: hidden;
-	text-overflow: ellipsis;
-}
-
-#add-cover {
-	width: 10rem;
-	height: 15rem;
-}
-
-.window .window-content {
-	flex-direction: row;
-}
-
-#add-form {
-	flex-grow: 1;
-	width: 75%;
-}
-
-#add-form tbody {
-	vertical-align: text-top;
-}
-
-#add-volume {
-	background-color: var(--success-color);
-}
-
 @media (max-width: 1205px) {
 	.filter-bar > * {
 		min-width: 30%;
-	}
-}
-
-@media (max-width: 720px) {
-	#add-cover {
-		display: none;
 	}
 }
 

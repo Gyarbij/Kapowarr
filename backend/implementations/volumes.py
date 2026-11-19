@@ -2367,7 +2367,7 @@ def refresh_and_scan(
             if issue_cv is not None and issue_cv not in fetched_ids:
                 publisher_identity = cursor.execute("""
                     SELECT 1 FROM issue_source_ids
-                    WHERE issue_id = ? AND source != 'comicvine' LIMIT 1;
+                    WHERE issue_id = ? AND source NOT IN ('comicvine', 'getcomics') LIMIT 1;
                 """, (issue_id,)).fetchone()
                 if publisher_identity is not None:
                     from backend.implementations.metadata_ids import _record_reconciliation

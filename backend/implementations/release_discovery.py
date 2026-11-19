@@ -168,13 +168,26 @@ def _publisher_family(publisher: Union[str, None]) -> str:
     if 'image' in value:
         return 'image'
     words = publisher_word_regex.findall(value)
-    return ''.join(
+    family = ''.join(
         [word for word in words if word not in GENERIC_PUBLISHER_WORDS]
         or words
     )
+    return 'rebellion' if family in (
+        '2000ad', 'rebelliondevelopments') else family
 
 
-def _compatible_years(first: Union[int, None], second: Union[int, None]) -> bool:
+def _release_title_key(title: str) -> str:
+    literal = ''.join(
+        character for character in title.casefold() if character.isalnum())
+    if literal in ('judgedreddmagazine', 'judgedreddmegazine'):
+        return 'judgedreddmegazine'
+    if literal == '2000adprog':
+        return '2000ad'
+    return _clean_match_title(title)
+
+
+def _compatible_years(first: Union[int, None],
+                      second: Union[int, None]) -> bool:
     return first is None or second is None or first == second
 
 
@@ -214,7 +227,7 @@ def merge_discovery_records(records: List[dict]) -> List[dict]:
         same_issue = merged_by_issue.setdefault((
             record.get('calculated_issue_number'),
             _publisher_family(record.get('publisher')),
-            _clean_match_title(record.get('series_title', ''))
+            _release_title_key(record.get('series_title', ''))
         ), [])
         existing = next((
             candidate
@@ -306,7 +319,9 @@ def _issue_year_matches(record: dict, issue_date: Union[str, None]) -> bool:
 
 def enrich_discovery_records(
     records: List[dict],
-    library_rows: List[dict]
+    library_rows: List[dict],
+    *,
+    use_weekly_overrides: bool = False
 ) -> List[dict]:
     volumes = {}
     for row in library_rows:
@@ -337,7 +352,7 @@ def enrich_discovery_records(
     for volume in volumes.values():
         volume['publisher_family'] = _publisher_family(volume['publisher'])
         for title in {
-            _clean_match_title(title)
+            _release_title_key(title)
             for title in (volume['title'], volume['alt_title'], *volume['source_titles'])
             if title
         }:
@@ -355,7 +370,7 @@ def enrich_discovery_records(
         candidate_volumes = [
             volume
             for volume in volumes_by_title.get(
-                _clean_match_title(record['series_title']),
+                _release_title_key(record['series_title']),
                 ()
             )
             if volume['publisher_family'] == publisher_family
@@ -372,13 +387,23 @@ def enrich_discovery_records(
             and _issue_year_matches(record, issue['date'])
         ]
         identity_matches = {
-            match[1]['id']: match
-            for source in record.get('provenance', ())
-            if (match := issues_by_source.get((
-                source['provider'], str(source.get('external_id') or '')
-            ))) is not None
-        }
-        if identity_matches:
+            match[1]['id']: match for source in record.get(
+                'provenance', ()) if source['provider'] != 'getcomics' and (
+                match := issues_by_source.get(
+                    (source['provider'], str(
+                        source.get('external_id') or '')))) is not None}
+        manual_match = (
+            issues_by_source.get(('getcomics', str(record.get('external_id'))))
+            if use_weekly_overrides and record.get('provider') == 'getcomics'
+            else None
+        )
+        if manual_match is not None and manual_match[1]['number'] != record.get(
+            'calculated_issue_number'
+        ):
+            manual_match = None
+        if manual_match is not None:
+            exact_issues = [manual_match]
+        elif identity_matches:
             exact_issues = list(identity_matches.values())
 
         local_volume_id = None
@@ -418,12 +443,17 @@ def enrich_discovery_records(
             local_status = 'not_in_library'
             match_reason = 'No exact local volume match'
 
+        if manual_match is not None:
+            match_reason = f'Manually matched to {
+                manual_match[0]["title"]}. {match_reason}'
+
         enriched.append({
             **record,
             'local_status': local_status,
             'match_reason': match_reason,
             'local_volume_id': local_volume_id,
             'local_issue_id': local_issue_id,
+            'manual_match': manual_match is not None,
             'metadata_origin': (
                 'publisher'
                 if len(exact_issues) == 1
@@ -707,7 +737,7 @@ def get_discovery_library_rows() -> List[dict]:
             i.id AS issue_id,
             i.comicvine_id AS issue_comicvine_id,
             i.calculated_issue_number,
-            i.date AS issue_date,
+            COALESCE(i.store_date, i.date) AS issue_date,
             i.monitored AS issue_monitored,
             EXISTS (
                 SELECT 1 FROM issues_files
@@ -726,7 +756,8 @@ def get_discovery_library_rows() -> List[dict]:
         SELECT s.issue_id, s.source, s.source_id, d.series_title
         FROM issue_source_ids s
         LEFT JOIN release_discovery d
-            ON d.provider = s.source AND d.external_id = s.source_id;
+            ON d.provider = s.source AND d.external_id = s.source_id
+            AND s.source != 'getcomics';
     """).fetchalldict():
         identities.setdefault(identity['issue_id'], []).append(identity)
         if identity['series_title'] and identity['issue_id'] in issue_volumes:

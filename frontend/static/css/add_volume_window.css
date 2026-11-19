@@ -1,0 +1,47 @@
+#add-window h2 {
+	font-weight: 400;
+	white-space: nowrap;
+	overflow-x: hidden;
+	text-overflow: ellipsis;
+}
+
+#add-window .window-content {
+	flex-direction: row;
+}
+
+#add-cover {
+	width: 10rem;
+	height: 15rem;
+	object-fit: contain;
+}
+
+#add-form {
+	flex: 1;
+	min-width: 0;
+}
+
+#add-form tbody {
+	vertical-align: text-top;
+}
+
+#add-form input, #add-form select {
+	max-width: 100%;
+}
+
+#add-form > p {
+	overflow-wrap: anywhere;
+}
+
+#add-error:empty {
+	display: none;
+}
+
+#add-volume {
+	background-color: var(--success-color);
+}
+
+@media (max-width: 720px) {
+	#add-cover {
+		display: none;
+	}
+}

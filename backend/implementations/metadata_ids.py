@@ -11,7 +11,8 @@ from backend.base.custom_exceptions import (CVRateLimitReached,
                                             InvalidKeyValue, VolumeNotMatched)
 from backend.base.definitions import (ActivityCategory, ActivityEventType,
                                       IssueMetadata, MetadataSourceID,
-                                      MonitorScheme, VolumeMetadata)
+                                      MonitorScheme, SpecialVersion,
+                                      VolumeMetadata)
 from backend.base.logging import LOGGER
 from backend.features.activity_history import record_activity
 from backend.implementations.comicvine import ComicVine
@@ -198,7 +199,7 @@ def get_metadata_identity_data(volume_id: int) -> dict:
         FROM issues i INNER JOIN issue_source_ids s ON s.issue_id = i.id
         INNER JOIN release_discovery d
             ON d.provider = s.source AND d.external_id = s.source_id
-        WHERE i.volume_id = ? AND d.cover_url IS NOT NULL
+        WHERE i.volume_id = ? AND d.cover_url IS NOT NULL AND s.source != 'getcomics'
         ORDER BY i.calculated_issue_number LIMIT 1;
     """, (volume_id,)).fetchone()
     return {
@@ -299,7 +300,7 @@ def reconcile_comicvine(
             WHERE i.volume_id = ? AND i.comicvine_id IS NOT NULL
                 AND EXISTS (
                     SELECT 1 FROM issue_source_ids s
-                    WHERE s.issue_id = i.id AND s.source != 'comicvine'
+                    WHERE s.issue_id = i.id AND s.source NOT IN ('comicvine', 'getcomics')
                 );
         """, (volume_id,)).fetchall()
         if any(row[0] not in confirmed_ids for row in linked_issues):
@@ -349,7 +350,7 @@ def reconcile_comicvine(
         cursor.execute("""
             UPDATE volumes SET comicvine_id = ?,
                 alt_title = COALESCE(alt_title, CASE WHEN title != ? THEN title END),
-                title = ?, year = ?,
+                title = ?, year = COALESCE(?, year),
                 publisher = ?, description = COALESCE(NULLIF(?, ''), description),
                 site_url = ?
             WHERE id = ?;
@@ -420,22 +421,43 @@ def _publisher_issue_matches_local(record: dict, issue_id: int) -> bool:
     )
 
 
-def add_publisher_issue(
-    source: str, source_id: str, root_folder_id: int,
-    monitored: bool = True, monitor_new_issues: bool = True,
-    auto_search: bool = False
-) -> int:
-    from backend.implementations.volumes import Library, Volume
-
+def get_publisher_add_record(source: str, source_id: str) -> dict:
     if source not in PUBLISHER_SOURCES:
         raise InvalidKeyValue('source', source)
-    cursor = get_db()
-    record = cursor.execute("""
+    record = get_db().execute("""
         SELECT * FROM release_discovery
         WHERE provider = ? AND external_id = ?;
     """, (source, source_id)).fetchonedict()
     if record is None or record['issue_number'] is None:
         raise InvalidKeyValue('source_id', source_id)
+    if record['series_year'] is not None:
+        record['suggested_year'] = record['series_year']
+        record['year_source'] = 'series'
+    elif record['issue_number'] == 1 and record['release_date']:
+        record['suggested_year'] = date.fromisoformat(
+            record['release_date']).year
+        record['year_source'] = 'first_issue'
+    else:
+        record['suggested_year'] = None
+        record['year_source'] = None
+    return record
+
+
+def add_publisher_issue(
+    source: str,
+    source_id: str,
+    root_folder_id: int,
+    monitored: bool = True,
+    monitor_new_issues: bool = True,
+    auto_search: bool = False,
+    monitor_scheme: MonitorScheme = MonitorScheme.ALL,
+    volume_folder: Optional[str] = None,
+    special_version: Optional[SpecialVersion] = None,
+    year: Optional[int] = None) -> int:
+    from backend.implementations.volumes import Library, Volume
+
+    record = get_publisher_add_record(source, source_id)
+    cursor = get_db()
     existing = cursor.execute("""
         SELECT i.volume_id FROM issue_source_ids s
         INNER JOIN issues i ON i.id = s.issue_id
@@ -506,7 +528,8 @@ def add_publisher_issue(
     else:
         metadata: VolumeMetadata = {
             'comicvine_id': None, 'title': record['series_title'],
-            'year': record['series_year'], 'volume_number': 1,
+            'year': year if year is not None else record['suggested_year'],
+            'volume_number': 1,
             'publisher': record['publisher'], 'description': '',
             'site_url': record['external_url'] or '', 'aliases': [],
             'cover_link': record['cover_url'] or '', 'cover': None,
@@ -514,9 +537,14 @@ def add_publisher_issue(
             'translated': False
         }
         volume_id = Library.add_metadata(
-            metadata, root_folder_id, monitored, MonitorScheme.ALL,
-            monitor_new_issues, auto_search=False
-        )
+            metadata,
+            root_folder_id,
+            monitored,
+            monitor_scheme,
+            monitor_new_issues,
+            volume_folder,
+            special_version,
+            auto_search=False)
     if auto_search:
         from backend.features.tasks import AutoSearchVolume, TaskHandler
         TaskHandler().add(AutoSearchVolume(volume_id))

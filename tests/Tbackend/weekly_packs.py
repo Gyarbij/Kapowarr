@@ -1,11 +1,13 @@
 import asyncio
+import sqlite3
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.implementations.weekly_packs import (
-    parse_weekly_pack,
-    queue_weekly_pack_items,
-)
+from backend.base.custom_exceptions import InvalidKeyValue
+from backend.implementations import release_discovery, weekly_packs
+from backend.implementations.weekly_packs import (parse_weekly_pack,
+                                                  queue_weekly_pack_items)
+from backend.internals.db import DB_SCHEMA, KapowarrCursor
 
 
 class WeeklyPackParserTest(unittest.TestCase):
@@ -15,8 +17,10 @@ class WeeklyPackParserTest(unittest.TestCase):
             'date': '2026-08-19T18:28:22',
             'modified': '2026-08-20T08:00:00',
             'link': 'https://getcomics.org/other-comics/2026-08-19-weekly-pack/',
-            'title': {'rendered': '2026.08.19 Weekly Pack'},
-            'content': {'rendered': """
+            'title': {
+                'rendered': '2026.08.19 Weekly Pack'},
+            'content': {
+                'rendered': """
                 <h3><span>JPG</span></h3>
                 <ul>
                     <li>2026.08.19 DC Week (738 MB) :
@@ -58,8 +62,7 @@ class WeeklyPackParserTest(unittest.TestCase):
                         <a href="https://getcomics.org.evil.example/trap/">Download</a>
                     </li>
                 </ul>
-            """}
-        }
+            """}}
 
     def test_separates_archives_from_individual_issues(self):
         pack = parse_weekly_pack(self.post)
@@ -116,6 +119,93 @@ class WeeklyPackParserTest(unittest.TestCase):
         result = _discovery_item(item, '2026-08-26')
 
         self.assertIsNone(result['calculated_issue_number'])
+
+    def test_judge_dredd_matches_rebellion_and_not_a_different_series(self):
+        self.post['content']['rendered'] = """
+            <h3>INDIE COMICS</h3>
+            <p>2000AD:</p>
+            <ul><li>Judge Dredd Magazine #498 :
+                <a href="https://getcomics.org/other-comics/judge-dredd-498/">Download</a>
+            </li></ul>
+        """
+        pack = parse_weekly_pack(self.post)
+        row = {
+            'volume_id': 5,
+            'title': 'Judge Dredd Megazine',
+            'publisher': 'Rebellion',
+            'volume_year': 2003,
+            'issue_id': 498,
+            'issue_date': '2026-08-19',
+            'calculated_issue_number': 498.,
+            'downloaded': True}
+        unrelated = {
+            **row,
+            'volume_id': 6,
+            'issue_id': 499,
+            'title': 'Judge Dredd'}
+        with patch.object(weekly_packs, 'get_weekly_packs', return_value=[pack]):
+            packs = asyncio.run(weekly_packs.get_enriched_weekly_packs(
+                library_rows=[row, unrelated]
+            ))
+        self.assertEqual(packs[0]['items'][0]['local_status'], 'downloaded')
+        self.assertEqual(packs[0]['items'][0]['local_volume_id'], 5)
+
+    def test_manual_match_is_persistent_reversible_and_only_applies_to_one_release(
+        self):
+        connection = sqlite3.connect(':memory:')
+        self.addCleanup(connection.close)
+        connection.row_factory = sqlite3.Row
+        cursor = connection.cursor(KapowarrCursor)
+        cursor.executescript(DB_SCHEMA)
+        cursor.executescript("""
+            INSERT INTO root_folders(id, folder) VALUES (1, '/comics');
+            INSERT INTO volumes(id, title, year, publisher, root_folder)
+            VALUES (1, 'Local Series', 2025, 'DC Comics', 1);
+            INSERT INTO issues(id, volume_id, issue_number, calculated_issue_number)
+            VALUES (10, 1, '5', 5), (11, 1, '6', 6);
+            INSERT INTO files(id, filepath, size) VALUES (1, '/comics/5.cbz', 1);
+            INSERT INTO issues_files(issue_id, file_id) VALUES (10, 1);
+        """)
+        self.post['content']['rendered'] += """
+            <h3>DC COMICS</h3>
+            <ul><li>Lobo #5 :
+                <a href="https://getcomics.org/dc/lobo-another/">Download</a>
+            </li></ul>
+        """
+        with patch.object(weekly_packs, 'get_db', return_value=cursor), \
+                patch.object(release_discovery, 'get_db', return_value=cursor), \
+                patch.object(weekly_packs, 'get_weekly_packs', new_callable=AsyncMock) as fetch:
+            fetch.side_effect = lambda weeks, force_refresh=False: [
+                parse_weekly_pack(self.post)]
+            article = 'https://getcomics.org/dc/lobo-5-2026/'
+            item = asyncio.run(weekly_packs.get_weekly_match_item(article, 8))
+            with self.assertRaises(InvalidKeyValue):
+                weekly_packs.set_weekly_match(item, 11)
+            with self.assertRaises(InvalidKeyValue):
+                asyncio.run(weekly_packs.get_weekly_match_item(
+                    'https://getcomics.org/dls/archive', 8
+                ))
+            candidates = weekly_packs.weekly_match_candidates(
+                item, 'Local Series')
+            self.assertEqual([row['issue_id'] for row in candidates], [10])
+            weekly_packs.set_weekly_match(item, 10)
+            pack, = asyncio.run(weekly_packs.get_enriched_weekly_packs())
+            lobo = [entry for entry in pack['items']
+                if entry['series_title'] == 'Lobo']
+            self.assertEqual([entry['local_status'] for entry in lobo], [
+                'downloaded', 'not_in_library'
+            ])
+            self.assertTrue(lobo[0]['manual_match'])
+            self.assertFalse(release_discovery.enrich_discovery_records(
+                [lobo[0]], release_discovery.get_discovery_library_rows()
+            )[0]['manual_match'])
+            weekly_packs.set_weekly_match(item, None)
+            pack, = asyncio.run(weekly_packs.get_enriched_weekly_packs())
+            self.assertFalse(pack['items'][0]['manual_match'])
+            self.assertEqual(pack['items'][0]['local_status'], 'not_in_library')
+            self.assertEqual(cursor.execute(
+                'SELECT file_id FROM issues_files WHERE issue_id = 10;'
+            ).fetchone()[0], 1)
 
     @patch('backend.implementations.weekly_packs.get_weekly_packs')
     def test_queue_revalidates_exact_issue_and_rejects_metadata_pending(

@@ -1,11 +1,32 @@
 {% extends "base.html" %}
-{% from "base.html" import icon_button %}
+{% from "base.html" import icon_button, window %}
 {% block title %}Weekly Packs{% endblock %}
 {% block css %}
+	<link rel="stylesheet" href="{{ url_for('static', filename='css/window.css') }}">
 	<link rel="stylesheet" href="{{ url_for('static', filename='css/weekly_packs.css') }}">
 {% endblock %}
 {% block js %}
+	<script src="{{ url_for('static', filename='js/window.js') }}" defer></script>
 	<script src="{{ url_for('static', filename='js/weekly_packs.js') }}" defer></script>
+{% endblock %}
+
+{% block windows %}
+	{% set match_content %}
+		<strong id="weekly-match-title"></strong>
+		<p id="weekly-match-current"></p>
+		<p>Choose the issue already in your library. This changes only this release's match; it doesn't move files or start a download.</p>
+		<form id="weekly-match-search">
+			<input id="weekly-match-query" type="search" aria-label="Library series title" placeholder="Library series title" maxlength="200">
+			<button type="submit">Search library</button>
+		</form>
+		<p id="weekly-match-message" role="status"></p>
+		<div id="weekly-match-results"></div>
+	{% endset %}
+	{% set match_buttons %}
+		<button id="weekly-match-reset" type="button" class="hidden">Use automatic matching</button>
+		<button id="weekly-match-save" type="button" disabled>Save match</button>
+	{% endset %}
+	{{ window(False, "weekly-match-window", "Match release to library", match_content, match_buttons) }}
 {% endblock %}
 
 {% block right_side_header %}

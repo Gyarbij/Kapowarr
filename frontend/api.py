@@ -62,7 +62,8 @@ from backend.implementations.file_matching import get_file_matching, set_file_ma
 from backend.implementations.metadata_cache import MetadataCache
 from backend.implementations.metadata_sources.base import MetadataSourceType
 from backend.implementations.metadata_ids import (
-    add_publisher_issue, get_metadata_identity_data, reconcile_comicvine,
+    add_publisher_issue, get_metadata_identity_data, get_publisher_add_record,
+    reconcile_comicvine,
 )
 from backend.implementations.naming import (
     generate_volume_folder_name,
@@ -90,7 +91,10 @@ from backend.implementations.volumes import Library, delete_issue_file
 from backend.implementations.weekly_packs import (
     WEEKLY_PACK_ACTIONS,
     get_enriched_weekly_packs,
+    get_weekly_match_item,
     queue_weekly_pack_items,
+    set_weekly_match,
+    weekly_match_candidates,
 )
 from backend.internals.db import get_db
 from backend.internals.db_models import FilesDB
@@ -1018,15 +1022,6 @@ def api_volumes():
         if not isinstance(auto_search, bool):
             raise InvalidKeyValue('auto_search', auto_search)
 
-        special_version = data.get('special_version') or None
-        if special_version == 'auto':
-            sv = None
-        else:
-            try:
-                sv = SpecialVersion(special_version)
-            except ValueError:
-                raise InvalidKeyValue('special_version', special_version)
-
         volume_id = Library.add(
             comicvine_id,
             root_folder_id,
@@ -1034,7 +1029,7 @@ def api_volumes():
             monitoring_scheme,
             monitor_new_issues,
             volume_folder,
-            sv,
+            _add_special_version(data.get('special_version')),
             auto_search
         )
         volume_info = Library.get_volume(volume_id).get_public_data()
@@ -1049,20 +1044,41 @@ def api_volumes_stats():
     return return_api(result)
 
 
-@api.route('/volumes/from-source', methods=['POST'])
+def _add_special_version(value: Any) -> Union[SpecialVersion, None]:
+    if value == 'auto':
+        return None
+    try:
+        return SpecialVersion(value or None)
+    except ValueError:
+        raise InvalidKeyValue('special_version', value)
+
+
+@api.route('/volumes/from-source', methods=['GET', 'POST'])
 @error_handler
 @auth
 def api_volume_from_source():
-    data = request.get_json()
+    data = request.args.to_dict() if request.method == 'GET' else request.get_json()
     if not isinstance(data, dict):
         raise InvalidKeyValue('body', data)
     source = data.get('source')
     source_id = data.get('source_id')
-    root_folder_id = data.get('root_folder_id')
     if not isinstance(source, str):
         raise InvalidKeyValue('source', source)
     if not isinstance(source_id, str) or not source_id or len(source_id) > 1024:
         raise InvalidKeyValue('source_id', source_id)
+    if request.method == 'GET':
+        record = get_publisher_add_record(source, source_id)
+        return return_api({
+            'comicvine_id': None,
+            'title': record['series_title'],
+            'year': record['suggested_year'],
+            'year_source': record['year_source'],
+            'publisher': record['publisher'],
+            'volume_number': 1,
+            'cover_link': record['cover_url']
+        })
+
+    root_folder_id = data.get('root_folder_id')
     if type(root_folder_id) is not int or root_folder_id < 1:
         raise InvalidKeyValue('root_folder_id', root_folder_id)
     options = {
@@ -1073,7 +1089,29 @@ def api_volume_from_source():
     for key, value in options.items():
         if not isinstance(value, bool):
             raise InvalidKeyValue(key, value)
-    volume_id = add_publisher_issue(source, source_id, root_folder_id, **options)
+    scheme = data.get('monitoring_scheme', 'all')
+    try:
+        monitor_scheme = MonitorScheme(scheme)
+    except ValueError:
+        raise InvalidKeyValue('monitoring_scheme', scheme)
+    volume_folder = data.get('volume_folder')
+    if volume_folder is not None and not isinstance(volume_folder, str):
+        raise InvalidKeyValue('volume_folder', volume_folder)
+    year = data.get('year')
+    if year is not None and (type(year) is not int or not 1000 <= year <= 9999):
+        raise InvalidKeyValue('year', year)
+    volume_id = add_publisher_issue(
+        source,
+        source_id,
+        root_folder_id,
+        **options,
+        monitor_scheme=monitor_scheme,
+        volume_folder=volume_folder or None,
+        special_version=_add_special_version(
+            data.get(
+                'special_version',
+                'auto')),
+        year=year)
     return return_api(Library.get_volume(volume_id).get_public_data(), code=201)
 
 
@@ -1439,6 +1477,37 @@ def api_release_discovery():
         'per_page': per_page,
         'total_pages': max(1, (len(items) + per_page - 1) // per_page)
     })
+
+
+@api.route('/weekly-packs/match', methods=['GET', 'POST'])
+@error_handler
+@auth
+def api_weekly_pack_match():
+    if request.method == 'GET':
+        key = request.args.get('record_key')
+        weeks = _metadata_int_param('weeks', 8, 50)
+        query = request.args.get('query', '').strip()
+        if len(query) > 200:
+            raise InvalidKeyValue('query', 'Search text is too long')
+    else:
+        data = request.get_json()
+        if not isinstance(data, dict):
+            raise InvalidKeyValue('body', data)
+        key, weeks = data.get('record_key'), data.get('weeks', 8)
+        if type(weeks) is not int or not 1 <= weeks <= 50:
+            raise InvalidKeyValue('weeks', weeks)
+        if 'issue_id' not in data:
+            raise KeyNotFound('issue_id')
+        issue_id = data['issue_id']
+        if issue_id is not None and (type(issue_id) is not int or issue_id < 1):
+            raise InvalidKeyValue('issue_id', issue_id)
+    if not isinstance(key, str) or not key or len(key) > 1024:
+        raise InvalidKeyValue('record_key', key)
+    item = run(get_weekly_match_item(key, weeks))
+    if request.method == 'GET':
+        return return_api(weekly_match_candidates(item, query))
+    set_weekly_match(item, issue_id)
+    return return_api({'issue_id': issue_id})
 
 
 @api.route('/weekly-packs', methods=['GET', 'POST'])

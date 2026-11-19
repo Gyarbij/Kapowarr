@@ -76,57 +76,15 @@ const IssueCatalog = {
 			'group', 'inc', 'llc', 'ltd'
 		]);
 		const identifying = words.filter(word => !ignored.has(word));
-		return (identifying.length ? identifying : words).join('');
+		const key = (identifying.length ? identifying : words).join('');
+		return ['2000ad', 'rebelliondevelopments'].includes(key) ? 'rebellion' : key;
 	},
 
-	async addPublisherDialog(source) {
-		const error = document.getElementById('source-add-error');
-		const submit = document.getElementById('source-add-submit');
-		const folders = document.getElementById('source-root-folder');
-		error.textContent = '';
-		submit.disabled = true;
-		document.getElementById('source-add-identity').textContent =
-			`${this.sourceNames[source.provider] || source.provider}: ${source.external_id}`;
-		showWindow('source-add-window');
-		try {
-			const apiKey = await usingApiKey();
-			const response = await fetchAPI('/rootfolder', apiKey);
-			folders.replaceChildren(...response.result.map(folder => {
-				const option = document.createElement('option');
-				option.value = folder.id;
-				option.textContent = folder.folder;
-				return option;
-			}));
-			if (!response.result.length) {
-				error.textContent = 'Add a root folder under Settings > Media Management first.';
-				return;
-			}
-			submit.disabled = false;
-			document.getElementById('source-add-form').onsubmit = async event => {
-				event.preventDefault();
-				submit.disabled = true;
-				error.textContent = '';
-				try {
-					const result = await sendAPI('POST', '/volumes/from-source', apiKey, {}, {
-						source: source.provider,
-						source_id: String(source.external_id),
-						root_folder_id: Number(folders.value),
-						monitor: document.getElementById('source-monitor').value === 'true',
-						monitor_new_issues: document.getElementById('source-monitor-new').value === 'true',
-						auto_search: document.getElementById('source-auto-search').checked
-					});
-					const json = await result.json();
-					window.location.href = `${url_base}/volumes/${json.result.id}`;
-				} catch (failure) {
-					console.error('Publisher addition failed:', failure);
-					error.textContent = 'Could not add this publisher entry. Check the root folder and application logs; ambiguous source identities require review.';
-					submit.disabled = false;
-				}
-			};
-		} catch (failure) {
-			console.error('Publisher addition setup failed:', failure);
-			error.textContent = 'Could not load root folders. Try again.';
-		}
+	addPublisherDialog(source) {
+		return AddVolumeWindow.open({
+			source,
+			onAdded: id => { window.location.href = `${url_base}/volumes/${id}`; }
+		});
 	},
 
 	card(issue) {
